@@ -80,6 +80,25 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// ─── Admin: Add credits to a user (protected by JWT_SECRET header) ───
+app.post('/api/admin/add-credits', (req, res) => {
+  const secret = req.headers['x-admin-secret'];
+  if (!secret || secret !== process.env.JWT_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const { email, credits } = req.body;
+  if (!email || !credits) {
+    return res.status(400).json({ error: 'email and credits required' });
+  }
+  const user = db.prepare('SELECT id, email, credits, plan FROM users WHERE email = ?').get(email.toLowerCase().trim());
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  db.prepare("UPDATE users SET credits = credits + ?, updated_at = datetime('now') WHERE id = ?").run(credits, user.id);
+  const updated = db.prepare('SELECT id, email, credits, plan FROM users WHERE id = ?').get(user.id);
+  res.json({ success: true, user: updated });
+});
+
 // Report status endpoint (public, for polling)
 app.get('/api/report-status/:id', (req, res) => {
   const report = db.prepare(`
