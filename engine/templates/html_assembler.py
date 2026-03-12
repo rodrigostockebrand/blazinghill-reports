@@ -8,7 +8,6 @@ Matches the exact format and styling of the Meller sample report.
 import os
 import json
 import base64
-import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -373,6 +372,16 @@ def _build_javascript():
 </script>'''
 
 
+def _load_css():
+    """Load the report CSS — prefer sample-report/style.css, fallback to inline."""
+    sample_css = os.path.join(os.path.dirname(__file__), '..', '..', 'sample-report', 'style.css')
+    if os.path.exists(sample_css):
+        with open(sample_css, 'r', encoding='utf-8') as f:
+            return f.read()
+    # Fallback: return minimal CSS
+    return _get_fallback_css()
+
+
 def assemble_report(report_context, sections_content, chart_paths, output_dir):
     """
     Assemble the final HTML report.
@@ -380,14 +389,8 @@ def assemble_report(report_context, sections_content, chart_paths, output_dir):
     """
     brand = report_context["brand_name"]
 
-    # Copy the CSS from sample report
-    sample_css = os.path.join(os.path.dirname(__file__), '..', '..', 'sample-report', 'style.css')
-    output_css = os.path.join(output_dir, 'style.css')
-    if os.path.exists(sample_css):
-        shutil.copy2(sample_css, output_css)
-    else:
-        # Write a minimal CSS if sample not available
-        _write_fallback_css(output_css)
+    # Load CSS and embed inline to avoid relative-path issues
+    css_content = _load_css()
 
     # Build HTML
     html = f'''<!DOCTYPE html>
@@ -397,7 +400,9 @@ def assemble_report(report_context, sections_content, chart_paths, output_dir):
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
   <title>{_html_escape(brand)} — PE Marketing Due Diligence Report</title>
-  <link rel="stylesheet" href="./style.css">
+  <style>
+{css_content}
+  </style>
 </head>
 <body>
 
@@ -436,9 +441,9 @@ def assemble_report(report_context, sections_content, chart_paths, output_dir):
     return output_path
 
 
-def _write_fallback_css(path):
-    """Write minimal CSS if sample stylesheet isn't available."""
-    css = ''':root {
+def _get_fallback_css():
+    """Return minimal CSS if sample stylesheet isn't available."""
+    return ''':root {
   --navy: #1a2332; --blue: #2563eb; --green: #16a34a;
   --amber: #d97706; --red: #dc2626;
   --gray-50: #f8fafc; --gray-100: #f1f5f9; --gray-200: #e2e8f0;
@@ -525,5 +530,3 @@ td { padding: 10px 12px; border-bottom: 1px solid var(--gray-100); }
   .kpi-grid { grid-template-columns: 1fr 1fr; }
 }
 '''
-    with open(path, "w") as f:
-        f.write(css)
