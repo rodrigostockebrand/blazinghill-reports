@@ -78,12 +78,23 @@ def _safe_get(data, *keys, default=None):
 
 
 def _extract_number(value, default=0):
-    """Extract numeric value from string like '€28.3M' or '680K'."""
+    """Extract numeric value from string like '€28.3M', '680K', '1.5x', '$75 (Est.)'."""
     if isinstance(value, (int, float)):
         return float(value)
     if not value:
         return default
-    s = str(value).replace(',', '').replace('€', '').replace('$', '').replace('£', '').replace('%', '').strip()
+    s = str(value)
+    # Return default for explicit N/A values
+    if s.strip().upper() in ('N/A', 'NA', 'NONE', 'NULL', '', '-'):
+        return default
+    # Strip common prefixes/suffixes
+    s = s.replace(',', '').replace('€', '').replace('$', '').replace('£', '').replace('%', '')
+    # Strip "(Est.)" and similar annotations
+    s = s.split('(')[0].strip()
+    # Strip trailing 'x' for multiples like "1.5x", "2.0x"
+    if s.lower().endswith('x'):
+        s = s[:-1]
+    s = s.strip()
     multiplier = 1
     if s.upper().endswith('B'):
         multiplier = 1_000_000_000
@@ -95,7 +106,7 @@ def _extract_number(value, default=0):
         multiplier = 1_000
         s = s[:-1]
     try:
-        return float(s) * multiplier
+        return float(s.strip()) * multiplier
     except (ValueError, TypeError):
         return default
 
@@ -106,11 +117,19 @@ def _is_all_zero_or_na(values):
     """Check if all values are zero, N/A, or empty — chart should be suppressed."""
     if not values:
         return True
+    na_strings = {'', '0', 'n/a', 'na', 'null', 'none', '0.0', '€0', '$0', '£0', '0%', '0x', '0.0x'}
     for v in values:
         if isinstance(v, (int, float)) and v != 0:
             return False
-        if isinstance(v, str) and v.strip().lower() not in ('', '0', 'n/a', 'na', 'null', 'none', '0.0', '€0', '$0', '0%'):
-            return False
+        if isinstance(v, str):
+            # Try to extract a number — if it yields > 0, this is real data
+            numeric = _extract_number(v, default=0)
+            if numeric != 0:
+                return False
+            # Also check raw string against known N/A patterns
+            if v.strip().lower() not in na_strings:
+                # Could be a real text value that's not a number
+                return False
     return True
 
 
