@@ -99,7 +99,11 @@ CRITICAL RULES:
 4. Write for senior PE partners — assume financial sophistication
 5. Use HTML formatting in text fields: <strong>, <em>, <a href>, <ul><li>, <br>
 6. Every section must have substantial analysis (minimum 3 paragraphs or equivalent structured content)
-7. Flag data gaps explicitly rather than filling with generic text"""
+7. If exact data is unavailable, provide realistic ESTIMATES based on industry benchmarks and available data. Label estimates clearly with "(Est.)" suffix. For example, if revenue is $100M and the industry average gross margin is 55-65%, estimate "60% (Est.)" rather than returning "N/A". PE analysts need working numbers for models, not blanks.
+8. For revenue_timeline: ALWAYS include at least 3 years of data. If only 1-2 years are available, estimate prior/future years based on known growth rates or industry averages. Mark estimates with "(Est.)".
+9. For unit economics: if exact CAC/LTV data isn't available, estimate from industry benchmarks for the brand's category (e.g., DTC apparel CAC is typically $25-$45, LTV/CAC ratio 3-5x). Mark all estimates.
+10. For return scenarios: ALWAYS provide bear/base/bull cases. Use available revenue + industry multiples to construct realistic scenarios even when exact deal terms are unknown.
+11. NEVER return "N/A" for ALL fields in a section. At minimum, provide industry-benchmark estimates."""
 
 
 def _prepare_data_context(collected_data, relevant_keys):
