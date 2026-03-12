@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const cors = require('cors');
 const db = require('./db');
 const authRoutes = require('./routes/auth');
@@ -19,6 +20,40 @@ app.use('/api/webhook', express.raw({ type: 'application/json' }));
 app.use(cors());
 app.use(express.json());
 
+// ─── Serve generated reports at /reports/:reportId ───
+// Each report is a folder with index.html + assets/
+app.use('/reports', (req, res, next) => {
+  // Extract the report ID (first path segment after /reports/)
+  const parts = req.path.split('/').filter(Boolean);
+  if (parts.length === 0) {
+    return next();
+  }
+
+  const reportId = parts[0];
+  const subPath = parts.slice(1).join('/') || 'index.html';
+  const reportDir = path.join(__dirname, '..', 'reports', reportId);
+  const filePath = path.join(reportDir, subPath);
+
+  // Security: prevent directory traversal
+  if (!filePath.startsWith(reportDir)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  if (fs.existsSync(filePath)) {
+    return res.sendFile(filePath);
+  }
+
+  // If requesting the report root, serve index.html
+  if (parts.length === 1) {
+    const indexPath = path.join(reportDir, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath);
+    }
+  }
+
+  next();
+});
+
 // Serve static files from root (homepage, assets, etc.)
 app.use(express.static(path.join(__dirname, '..'), {
   index: 'index.html',
@@ -36,10 +71,24 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Report status endpoint (public, for polling)
+app.get('/api/report-status/:id', (req, res) => {
+  const report = db.prepare(`
+    SELECT id, status, report_url, brand_name, completed_at
+    FROM reports WHERE id = ?
+  `).get(req.params.id);
+
+  if (!report) {
+    return res.status(404).json({ error: 'Report not found' });
+  }
+
+  res.json({ report });
+});
+
 // SPA fallback — serve index.html for unmatched routes
 app.get('*', (req, res) => {
-  // Don't interfere with API routes
-  if (req.path.startsWith('/api/')) {
+  // Don't interfere with API routes or report routes
+  if (req.path.startsWith('/api/') || req.path.startsWith('/reports/')) {
     return res.status(404).json({ error: 'Not found' });
   }
   res.sendFile(path.join(__dirname, '..', 'index.html'));
@@ -47,4 +96,14 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`BlazingHill server running on port ${PORT}`);
+  console.log(`Environment: ${NODE_ENV}`);
+
+  // Log API key availability
+  const keys = {
+    PERPLEXITY_API_KEY: !!process.env.PERPLEXITY_API_KEY,
+    OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
+    DATAFORSEO_LOGIN: !!process.env.DATAFORSEO_LOGIN,
+    AHREFS_API_KEY: !!process.env.AHREFS_API_KEY,
+  };
+  console.log('API keys configured:', keys);
 });

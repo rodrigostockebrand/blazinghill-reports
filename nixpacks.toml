@@ -1,0 +1,14 @@
+# Nixpacks configuration for Railway
+# Ensures both Node.js and Python3 are available
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "python312", "python312Packages.pip"]
+
+[phases.install]
+cmds = [
+    "npm install",
+    "pip install -r engine/requirements.txt --break-system-packages"
+]
+
+[start]
+cmd = "node server/index.js"

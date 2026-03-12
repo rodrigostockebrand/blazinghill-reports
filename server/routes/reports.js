@@ -1,6 +1,8 @@
 const express = require('express');
+const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { runReport } = require('../../engine/run_report');
 
 const router = express.Router();
 
@@ -52,8 +54,8 @@ router.post('/', (req, res) => {
   }
 
   const reportId = uuidv4();
-
   const now = new Date().toISOString();
+
   db.prepare(`
     INSERT INTO reports (id, user_id, brand_name, domain, market, analysis_lens, priority, notes, status, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'generating', ?)
@@ -69,19 +71,18 @@ router.post('/', (req, res) => {
     now
   );
 
-  // Simulate report generation — in production this would trigger an async job
-  // For now, mark as completed after a brief delay with a link to the sample report format
-  setTimeout(() => {
-    try {
-      const reportUrl = `/reports/${reportId}`;
-      db.prepare(`
-        UPDATE reports SET status = 'completed', report_url = ?, completed_at = ?
-        WHERE id = ?
-      `).run(reportUrl, new Date().toISOString(), reportId);
-    } catch (e) {
-      console.error('Report generation error:', e);
-    }
-  }, 5000); // 5 second simulated generation time
+  // Fire off the report generation pipeline asynchronously
+  runReport({
+    reportId,
+    brandName: brandName.trim(),
+    domain: domain.trim(),
+    market,
+    analysisLens: analysisLens || 'Commercial diligence',
+  }, db).then((reportUrl) => {
+    console.log(`[reports] Report ${reportId} completed: ${reportUrl}`);
+  }).catch((err) => {
+    console.error(`[reports] Report ${reportId} failed:`, err.message);
+  });
 
   const updated = db.prepare('SELECT credits FROM users WHERE id = ?').get(req.user.id);
 
