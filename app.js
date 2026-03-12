@@ -213,18 +213,21 @@
   /* ─── Auth Handlers ─── */
   function openAuth(mode) {
     state.pendingAuthMode = mode || 'signup';
+    const nameGroup = qs('authNameGroup');
     if (state.pendingAuthMode === 'login') {
       qs('authModalEyebrow').textContent = 'Account access';
       qs('authModalTitle').textContent = 'Log into your workspace';
       qs('authModalSub').textContent = 'Access your report environment, generated reports, and billing.';
       qs('authPerk').textContent = 'Returning users can access their workspace, view reports, and manage credits.';
       qs('authSubmitBtn').textContent = 'Log in';
+      if (nameGroup) nameGroup.style.display = 'none';
     } else {
       qs('authModalEyebrow').textContent = 'Demo registration';
       qs('authModalTitle').textContent = 'Create your demo account';
       qs('authModalSub').textContent = 'Register to access your workspace and start generating reports immediately.';
       qs('authPerk').textContent = 'Demo accounts receive 2 complimentary report credits — no credit card required.';
       qs('authSubmitBtn').textContent = 'Continue';
+      if (nameGroup) nameGroup.style.display = '';
     }
     openModal(authModal);
   }
