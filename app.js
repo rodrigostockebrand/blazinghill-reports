@@ -365,9 +365,23 @@
     viewSampleHighlights.addEventListener('click', openSampleReport);
   }
 
+  // Clear old submission result when user starts a new report
+  ['brandInput', 'domainInput', 'notesInput'].forEach((id) => {
+    const el = qs(id);
+    if (el) el.addEventListener('focus', () => {
+      submissionResult.classList.add('hidden');
+      submissionResult.innerHTML = '';
+    });
+  });
+
   // Report creation form
   deepDiveForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+
+    // Clear any previous submission result
+    submissionResult.classList.add('hidden');
+    submissionResult.innerHTML = '';
+
     const brand = qs('brandInput').value.trim();
     const domain = qs('domainInput').value.trim();
     const market = qs('marketInput').value;
@@ -400,6 +414,11 @@
         Credits remaining: <strong>${data.creditsRemaining === 'unlimited' ? '∞' : data.creditsRemaining}</strong><br><br>
         <em>You will see your report in the "My Reports" section once it's ready.</em>
       `;
+
+      // Reset form fields for next report
+      qs('brandInput').value = '';
+      qs('domainInput').value = '';
+      qs('notesInput').value = '';
 
       // Refresh account data
       refreshUser();
