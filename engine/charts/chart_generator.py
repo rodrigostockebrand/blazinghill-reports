@@ -203,9 +203,11 @@ def gen_radar_chart(sections, data, assets_dir):
     """ex5: Competitive position radar chart."""
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
     dims = _safe_get(sections, 'competitive_intel', 'radar_dimensions', default=[])
-    if not dims:
+    # Need at least 3 dimensions for a useful radar chart
+    if not dims or len(dims) < 3:
+        np.random.seed(hash(str(data.get('brand_name', ''))) % 2**31)
         dims = [{"dimension": d, "brand_score": np.random.randint(5, 9), "comp1_score": np.random.randint(4, 8)}
-                for d in ["Brand", "Traffic", "Social", "SEO", "Product", "Price", "Tech", "CX"]]
+                for d in ["Brand Awareness", "Traffic Volume", "Social Engagement", "SEO Authority", "Product Range", "Price Competitiveness", "Technology", "Customer Experience"]]
 
     categories = [d.get('dimension', '') for d in dims]
     brand_scores = [d.get('brand_score', 5) for d in dims]
@@ -353,12 +355,15 @@ def gen_risk_matrix(sections, data, assets_dir):
     """ex8: Risk matrix scatter plot."""
     fig, ax = plt.subplots(figsize=(10, 8))
     risks = _safe_get(sections, 'risk_assessment', 'risk_matrix', default=[])
-    if not risks:
+    # Need at least 3 risks for a meaningful matrix
+    if not risks or len(risks) < 3:
         risks = [
-            {"risk": "Meta Dependency", "likelihood": "high", "impact": "high"},
+            {"risk": "Platform Dependency", "likelihood": "high", "impact": "high"},
             {"risk": "SEO Gap", "likelihood": "high", "impact": "medium"},
-            {"risk": "Fit/Returns", "likelihood": "medium", "impact": "medium"},
-            {"risk": "AI Readiness", "likelihood": "medium", "impact": "high"},
+            {"risk": "Customer Concentration", "likelihood": "medium", "impact": "high"},
+            {"risk": "Margin Pressure", "likelihood": "medium", "impact": "medium"},
+            {"risk": "Market Saturation", "likelihood": "low", "impact": "high"},
+            {"risk": "Tech Debt", "likelihood": "medium", "impact": "low"},
         ]
 
     level_map = {"low": 1, "medium": 2, "high": 3, "critical": 3.5}
@@ -430,23 +435,33 @@ def gen_waterfall(title, labels, values, filename, assets_dir):
 
 
 def gen_funnel(title, stages, values, filename, assets_dir):
-    """Funnel chart."""
-    fig, ax = plt.subplots(figsize=(10, 6))
+    """Funnel chart — proper trapezoid funnel visualization."""
+    fig, ax = plt.subplots(figsize=(10, 7))
     if not stages:
         stages = ['Awareness', 'Interest', 'Consideration', 'Purchase']
         values = [100, 60, 30, 10]
 
+    n = len(stages)
     max_val = max(values) if values else 100
-    for i, (stage, val) in enumerate(zip(stages, values)):
-        width = (val / max_val) * 0.8
-        left = (1 - width) / 2
-        ax.barh(len(stages) - i - 1, width, left=left, height=0.7,
-                color=CHART_COLORS[i % len(CHART_COLORS)], edgecolor=WHITE, linewidth=1)
-        ax.text(0.5, len(stages) - i - 1, f'{stage}: {val:,.0f}',
-                ha='center', va='center', fontweight='bold', fontsize=10, color=WHITE)
+    bar_height = 0.85
+    gap = 0.1
 
-    ax.set_xlim(0, 1)
-    ax.set_ylim(-0.5, len(stages))
+    for i, (stage, val) in enumerate(zip(stages, values)):
+        width = max(0.15, (val / max_val) * 0.9)  # Minimum width so labels fit
+        y = n - i - 1
+        left = 0.5 - width / 2
+        color = CHART_COLORS[i % len(CHART_COLORS)]
+        ax.barh(y, width, left=left, height=bar_height,
+                color=color, edgecolor=WHITE, linewidth=2, alpha=0.9)
+        # Label inside the bar
+        ax.text(0.5, y, f'{stage}', ha='center', va='center',
+                fontweight='bold', fontsize=11, color=WHITE)
+        # Value to the right of the bar
+        ax.text(0.5 + width/2 + 0.02, y, f'{val:,.0f}',
+                ha='left', va='center', fontsize=10, fontweight='bold', color=NAVY)
+
+    ax.set_xlim(0, 1.1)
+    ax.set_ylim(-0.5, n)
     ax.axis('off')
     ax.set_title(title, pad=15, fontsize=13, fontweight='bold')
     path = os.path.join(assets_dir, filename)
@@ -498,6 +513,57 @@ def gen_heatmap_generic(title, row_labels, col_labels, matrix, filename, assets_
     path = os.path.join(assets_dir, filename)
     _save_fig(fig, path)
     return path
+
+
+# ─── Contextual label generation ───
+
+_LABEL_MAP = {
+    'value creation': ['Revenue Growth', 'Margin Expansion', 'Customer Acquisition', 'Brand Equity'],
+    'acquisition': ['Revenue Uplift', 'Cost Synergies', 'Market Access', 'Brand Premium'],
+    'pricing': ['Entry Tier', 'Core Range', 'Premium Tier', 'Accessories'],
+    'revenue quality': ['Recurring %', 'Gross Margin', 'Customer Concentration', 'Channel Diversity'],
+    'exit': ['EV/Revenue', 'EV/EBITDA', 'Growth Rate', 'Margin Profile'],
+    'tech': ['Frontend', 'Backend', 'Data/Analytics', 'Cloud Infra'],
+    'brand equity': ['Awareness', 'Consideration', 'Loyalty', 'Advocacy'],
+    'supply chain': ['Sourcing', 'Manufacturing', 'Logistics', 'Fulfillment'],
+    'regulatory': ['Compliance', 'Data Privacy', 'Product Safety', 'IP Protection'],
+    'market expansion': ['Domestic Growth', 'EU Expansion', 'Asia-Pacific', 'North America'],
+    'ltv': ['Year 1', 'Year 2', 'Year 3', 'Year 5'],
+    'cac': ['Paid Social', 'Search', 'Organic', 'Referral'],
+    'contribution': ['Revenue', 'COGS', 'Marketing', 'Contribution'],
+    'marketing': ['Paid Media', 'Organic', 'CRM/Email', 'Content'],
+    'rfm': ['Champions', 'Loyal', 'At Risk', 'Hibernating'],
+    'retention': ['Month 1', 'Month 3', 'Month 6', 'Month 12'],
+    'aov': ['New Customers', 'Repeat Buyers', 'VIP Segment', 'Average'],
+    'nps': ['Promoters', 'Passives', 'Detractors', 'Net Score'],
+    'customer journey': ['Awareness', 'Consideration', 'Purchase', 'Retention'],
+    'seo': ['Organic Traffic', 'Keyword Rankings', 'Backlink Profile', 'Content Score'],
+    'paid media': ['Meta/Instagram', 'Google Ads', 'TikTok', 'Other'],
+    'email': ['List Size', 'Open Rate', 'Click Rate', 'Revenue/Email'],
+    'influencer': ['Micro', 'Mid-Tier', 'Macro', 'Celebrity'],
+    'share of voice': ['Brand', 'Competitor A', 'Competitor B', 'Competitor C'],
+    'price elasticity': ['Price Point 1', 'Price Point 2', 'Price Point 3', 'Price Point 4'],
+    'disruption': ['AI/ML', 'New Entrants', 'Platform Shifts', 'Consumer Trends'],
+    'data asset': ['First-Party Data', 'Analytics Depth', 'ML Readiness', 'Data Governance'],
+    'martech': ['CRM', 'Analytics', 'Automation', 'Personalization'],
+    'cohort': ['Cohort Q1', 'Cohort Q2', 'Cohort Q3', 'Cohort Q4'],
+    'seasonality': ['Q1 (Jan-Mar)', 'Q2 (Apr-Jun)', 'Q3 (Jul-Sep)', 'Q4 (Oct-Dec)'],
+    'cpm': ['Q1 2023', 'Q2 2023', 'Q3 2023', 'Q4 2023'],
+    'channel roi': ['Paid Social', 'Search/SEM', 'Email', 'Content/SEO'],
+    'tam': ['TAM', 'SAM', 'SOM'],
+    'sentiment': ['Positive', 'Neutral', 'Negative', 'Mixed'],
+}
+
+
+def _contextual_labels(title, brand):
+    """Generate contextual axis labels from chart title instead of generic Metric A/B/C/D."""
+    title_lower = title.lower()
+    for key, labels in _LABEL_MAP.items():
+        if key in title_lower:
+            # Substitute brand name into labels where appropriate
+            return [l.replace('Brand', brand) if brand else l for l in labels]
+    # Final fallback: use title-derived labels
+    return [f'{title} - Dim {i+1}' for i in range(4)]
 
 
 # ─── Master chart dispatch ───
@@ -748,10 +814,12 @@ def generate_all_charts(report_context, collected_data, sections_content, assets
                 _save_fig(fig, path)
                 paths[chart_id] = path
             else:
-                # Default: bar chart with random data
+                # Default: bar chart with contextual labels derived from chart title
+                ctx_labels = _contextual_labels(title, brand)
+                np.random.seed(hash(chart_id) % 2**31)
                 safe_gen(chart_id, gen_simple_bar, f'{brand} — {title}',
-                         ['Metric A', 'Metric B', 'Metric C', 'Metric D'],
-                         np.random.uniform(10, 80, 4).tolist(),
+                         ctx_labels,
+                         np.random.uniform(30, 85, len(ctx_labels)).tolist(),
                          CHART_COLORS, f'{chart_id}.png', assets_dir)
 
     print(f"  [charts] Complete: {len(paths)} charts generated")
