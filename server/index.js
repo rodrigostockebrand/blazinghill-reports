@@ -37,7 +37,10 @@ app.use('/reports', (req, res, next) => {
   }
 
   const subPath = parts.slice(1).join('/') || 'index.html';
-  const reportDir = path.join(__dirname, '..', 'reports', reportId);
+  // Serve reports from persistent volume if available, otherwise fallback to app dir
+  const volumeMount = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
+  const reportsBase = volumeMount ? path.join(volumeMount, 'reports') : path.join(__dirname, '..', 'reports');
+  const reportDir = path.join(reportsBase, reportId);
   const filePath = path.join(reportDir, subPath);
 
   // Security: prevent directory traversal
