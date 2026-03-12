@@ -100,24 +100,55 @@ def _extract_number(value, default=0):
         return default
 
 
+# ─── Data validation helpers ───
+
+def _is_all_zero_or_na(values):
+    """Check if all values are zero, N/A, or empty — chart should be suppressed."""
+    if not values:
+        return True
+    for v in values:
+        if isinstance(v, (int, float)) and v != 0:
+            return False
+        if isinstance(v, str) and v.strip().lower() not in ('', '0', 'n/a', 'na', 'null', 'none', '0.0', '€0', '$0', '0%'):
+            return False
+    return True
+
+
+def _generate_placeholder(chart_id, assets_dir, reason="Data insufficient"):
+    """Return None — don't generate a placeholder image at all."""
+    return None
+
+
 # ─── Chart generation functions ───
 
 def gen_revenue_chart(sections, data, assets_dir):
-    """ex1: Revenue trajectory bar chart."""
-    fig, ax = plt.subplots(figsize=(10, 5))
+    """ex1: Revenue trajectory bar chart — must have ≥2 data points."""
     timeline = _safe_get(sections, 'company_profile', 'revenue_timeline', default=[])
-    if not timeline:
-        timeline = [{"year": "2021", "revenue": "€5.6M"}, {"year": "2022", "revenue": "€11M"},
-                     {"year": "2023", "revenue": "€18M"}, {"year": "2024", "revenue": "€28M"}]
 
-    years = [str(t.get('year', '')) for t in timeline]
-    revenues = [_extract_number(t.get('revenue', '0')) / 1e6 for t in timeline]
+    # Filter out entries with zero/N/A revenue
+    valid_timeline = []
+    for t in (timeline or []):
+        rev_val = _extract_number(t.get('revenue', '0'))
+        if rev_val > 0:
+            valid_timeline.append(t)
+
+    # Need at least 2 data points for a meaningful trajectory
+    if len(valid_timeline) < 2:
+        return _generate_placeholder('ex1_revenue', assets_dir, "Insufficient revenue history")
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    years = [str(t.get('year', '')) for t in valid_timeline]
+    revenues = [_extract_number(t.get('revenue', '0')) / 1e6 for t in valid_timeline]
+
+    # Detect currency from first entry
+    first_rev = str(valid_timeline[0].get('revenue', ''))
+    currency = '€' if '€' in first_rev else '£' if '£' in first_rev else '$'
 
     bars = ax.bar(years, revenues, color=MID_BLUE, width=0.6, edgecolor=DARK_BLUE, linewidth=0.5)
     for bar, rev in zip(bars, revenues):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.3,
-                f'€{rev:.1f}M', ha='center', va='bottom', fontweight='bold', fontsize=10, color=NAVY)
-    ax.set_ylabel('Revenue (€M)', fontweight='bold')
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(revenues)*0.02,
+                f'{currency}{rev:.1f}M', ha='center', va='bottom', fontweight='bold', fontsize=10, color=NAVY)
+    ax.set_ylabel(f'Revenue ({currency}M)', fontweight='bold')
     ax.set_title('Revenue Trajectory', pad=15)
     ax.set_ylim(0, max(revenues) * 1.25 if revenues else 10)
     path = os.path.join(assets_dir, 'ex1_revenue.png')
@@ -126,11 +157,19 @@ def gen_revenue_chart(sections, data, assets_dir):
 
 
 def gen_ebitda_chart(sections, data, assets_dir):
-    """ex2: EBITDA waterfall/breakdown."""
-    fig, ax = plt.subplots(figsize=(10, 5))
+    """ex2: EBITDA waterfall/breakdown — suppressed when no real data available."""
     ebitda_data = _safe_get(sections, 'pe_economics', 'ebitda_analysis', default=[])
-    labels = [d.get('label', '') for d in ebitda_data[:6]] or ['Revenue', 'COGS', 'Gross Profit', 'S&M', 'G&A', 'EBITDA']
-    values = [_extract_number(d.get('value', '0')) / 1e6 for d in ebitda_data[:6]] or [28.3, -11.3, 17.0, -8.5, -2.7, 5.8]
+
+    if not ebitda_data:
+        return _generate_placeholder('ex2_ebitda', assets_dir, "No EBITDA breakdown data")
+
+    raw_values = [d.get('value', '0') for d in ebitda_data[:6]]
+    if _is_all_zero_or_na(raw_values):
+        return _generate_placeholder('ex2_ebitda', assets_dir, "EBITDA data unavailable")
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    labels = [d.get('label', '') for d in ebitda_data[:6]]
+    values = [_extract_number(d.get('value', '0')) / 1e6 for d in ebitda_data[:6]]
     colors = [MID_BLUE if v >= 0 else RED for v in values]
     colors[-1] = GREEN  # EBITDA bar in green
 
@@ -148,25 +187,43 @@ def gen_ebitda_chart(sections, data, assets_dir):
 
 
 def gen_unit_economics(sections, data, assets_dir):
-    """ex3: Unit economics visual."""
-    fig, ax = plt.subplots(figsize=(10, 5))
+    """ex3: Unit economics visual — suppressed when all metrics are N/A or zero."""
     ue = _safe_get(sections, 'pe_economics', 'unit_economics', default={})
-    metrics = {
-        'AOV': _extract_number(ue.get('aov', {}).get('value', '€45')),
-        'CAC (Paid)': _extract_number(ue.get('cac_paid', {}).get('value', '€15')),
-        'CAC (Blend)': _extract_number(ue.get('cac_blended', {}).get('value', '€10')),
-        'LTV (3yr)': _extract_number(ue.get('ltv_3yr', {}).get('value', '€18')),
-        'Gross Margin': _extract_number(ue.get('gross_margin', {}).get('value', '62')),
+
+    # Extract values, using 0 as default (NOT fake placeholders)
+    raw_vals = {
+        'AOV': ue.get('aov', {}).get('value', 'N/A') if isinstance(ue.get('aov'), dict) else ue.get('aov', 'N/A'),
+        'CAC (Paid)': ue.get('cac_paid', {}).get('value', 'N/A') if isinstance(ue.get('cac_paid'), dict) else ue.get('cac_paid', 'N/A'),
+        'CAC (Blended)': ue.get('cac_blended', {}).get('value', 'N/A') if isinstance(ue.get('cac_blended'), dict) else ue.get('cac_blended', 'N/A'),
+        'LTV (3-Year)': ue.get('ltv_3yr', {}).get('value', 'N/A') if isinstance(ue.get('ltv_3yr'), dict) else ue.get('ltv_3yr', 'N/A'),
+        'Gross Margin': ue.get('gross_margin', {}).get('value', 'N/A') if isinstance(ue.get('gross_margin'), dict) else ue.get('gross_margin', 'N/A'),
     }
+
+    # Check if ALL values are N/A or zero — if so, suppress the chart entirely
+    if _is_all_zero_or_na(list(raw_vals.values())):
+        return _generate_placeholder('ex3_unit_economics', assets_dir, "No unit economics data available")
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    # Only include metrics that have actual values
+    metrics = {}
+    for name, raw in raw_vals.items():
+        val = _extract_number(raw, default=0)
+        if val > 0:
+            metrics[name] = val
+
+    if not metrics:
+        plt.close(fig)
+        return _generate_placeholder('ex3_unit_economics', assets_dir, "No unit economics data")
+
     names = list(metrics.keys())
     vals = list(metrics.values())
     colors = [MID_BLUE, RED, AMBER, GREEN, TEAL][:len(names)]
 
     bars = ax.barh(names, vals, color=colors, height=0.5)
     for bar, val, name in zip(bars, vals, names):
-        unit = '%' if 'Margin' in name else '€'
-        ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
-                f'{unit}{val:.0f}' if unit == '€' else f'{val:.0f}{unit}',
+        unit = '%' if 'Margin' in name else '$'
+        ax.text(bar.get_width() + max(vals)*0.02, bar.get_y() + bar.get_height()/2,
+                f'{unit}{val:,.0f}' if unit != '%' else f'{val:.0f}{unit}',
                 ha='left', va='center', fontweight='bold', fontsize=10)
     ax.set_title('Unit Economics Overview', pad=15)
     ax.set_xlabel('Value', fontweight='bold')
@@ -176,24 +233,31 @@ def gen_unit_economics(sections, data, assets_dir):
 
 
 def gen_pe_returns(sections, data, assets_dir):
-    """ex4: PE return scenarios (bear/base/bull)."""
-    fig, ax = plt.subplots(figsize=(10, 5))
+    """ex4: PE return scenarios (bear/base/bull) — suppressed when all MOICs are zero/N/A."""
     scenarios = _safe_get(sections, 'pe_economics', 'return_scenarios', default={})
-    labels = ['Bear', 'Base', 'Bull']
-    moics = [
-        _extract_number(scenarios.get('bear', {}).get('moic', '1.5')),
-        _extract_number(scenarios.get('base', {}).get('moic', '2.6')),
-        _extract_number(scenarios.get('bull', {}).get('moic', '4.0')),
+    raw_moics = [
+        str(scenarios.get('bear', {}).get('moic', 'N/A')),
+        str(scenarios.get('base', {}).get('moic', 'N/A')),
+        str(scenarios.get('bull', {}).get('moic', 'N/A')),
     ]
+
+    # Suppress chart if all MOICs are N/A or zero
+    if _is_all_zero_or_na(raw_moics):
+        return _generate_placeholder('ex4_pe_returns', assets_dir, "No return scenario data")
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    labels = ['Bear', 'Base', 'Bull']
+    moics = [_extract_number(m, default=0) for m in raw_moics]
     colors = [RED, AMBER, GREEN]
     bars = ax.bar(labels, moics, color=colors, width=0.5, edgecolor=NAVY, linewidth=0.5)
     for bar, m in zip(bars, moics):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.05,
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(moics)*0.02,
                 f'{m:.1f}x', ha='center', va='bottom', fontweight='bold', fontsize=14, color=NAVY)
     ax.set_ylabel('MOIC (Multiple on Invested Capital)', fontweight='bold')
     ax.set_title('Return Scenario Analysis', pad=15)
     ax.axhline(y=1.0, color=SLATE, linestyle='--', alpha=0.5, label='Breakeven')
     ax.legend(frameon=False)
+    ax.set_ylim(0, max(moics) * 1.3 if max(moics) > 0 else 5)
     path = os.path.join(assets_dir, 'ex4_pe_returns.png')
     _save_fig(fig, path)
     return path
@@ -580,17 +644,14 @@ def generate_all_charts(report_context, collected_data, sections_content, assets
     def safe_gen(chart_id, gen_func, *args, **kwargs):
         try:
             path = gen_func(*args, **kwargs)
-            paths[chart_id] = path
+            if path:  # Only store if chart was actually generated (not suppressed)
+                paths[chart_id] = path
+            else:
+                print(f"  [charts] ○ {chart_id} suppressed (insufficient data)")
         except Exception as e:
             print(f"  [charts] ✗ {chart_id} failed: {e}")
-            # Generate placeholder
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.text(0.5, 0.5, f'{chart_id}\n(Data insufficient for chart generation)',
-                    ha='center', va='center', fontsize=14, color=SLATE, transform=ax.transAxes)
-            ax.axis('off')
-            path = os.path.join(assets_dir, f'{chart_id}.png')
-            _save_fig(fig, path)
-            paths[chart_id] = path
+            # Don't generate placeholder — just skip the chart entirely
+            print(f"  [charts] ○ {chart_id} skipped due to error")
 
     s = sections_content
 
@@ -618,12 +679,14 @@ def generate_all_charts(report_context, collected_data, sections_content, assets
              [685, 450, 320, 180],
              CHART_COLORS, 'ex9_social.png', assets_dir, 'Followers (K)')
 
-    # Geo distribution
+    # Geo distribution — only generate if we have actual data
     geo = _safe_get(s, 'digital_marketing', 'geo_distribution', default=[])
-    geo_labels = [g.get('country', '') for g in geo[:8]] or ['Spain', 'Italy', 'France', 'Germany', 'US', 'UK']
-    geo_vals = [_extract_number(g.get('pct', '0')) for g in geo[:8]] or [35, 15, 12, 10, 8, 5]
-    safe_gen('ex10_geo', gen_donut, f'{brand} — Geographic Distribution',
-             geo_labels, geo_vals, CHART_COLORS, 'ex10_geo.png', assets_dir)
+    if geo and len(geo) >= 2:
+        geo_labels = [g.get('country', '') for g in geo[:8]]
+        geo_vals = [_extract_number(g.get('pct', '0')) for g in geo[:8]]
+        if not _is_all_zero_or_na([str(v) for v in geo_vals]):
+            safe_gen('ex10_geo', gen_donut, f'{brand} — Geographic Distribution',
+                     geo_labels, geo_vals, CHART_COLORS, 'ex10_geo.png', assets_dir)
 
     # Marketing funnel
     safe_gen('ex11_funnel', gen_funnel, f'{brand} — Marketing Funnel',
