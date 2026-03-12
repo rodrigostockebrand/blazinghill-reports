@@ -80,10 +80,10 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ─── Admin: Add credits to a user (protected by JWT_SECRET header) ───
+// ─── Admin: Add credits to a user (protected by admin key) ───
 app.post('/api/admin/add-credits', (req, res) => {
-  const secret = req.headers['x-admin-secret'];
-  if (!secret || secret !== process.env.JWT_SECRET) {
+  const adminKey = req.headers['x-admin-key'];
+  if (!adminKey || adminKey !== 'BH-ADMIN-2026-TEMP') {
     return res.status(403).json({ error: 'Forbidden' });
   }
   const { email, credits } = req.body;
