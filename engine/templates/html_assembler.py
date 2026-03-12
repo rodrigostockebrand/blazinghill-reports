@@ -226,19 +226,57 @@ def _render_generic_section(section_config, data, chart_paths, brand, idx):
                 # Render as stat rows or table depending on structure
                 if "label" in sub_data[0] and "value" in sub_data[0]:
                     html += _render_stat_rows(sub_data)
-                elif len(sub_data[0].keys()) <= 5:
-                    # Render as table
-                    headers = list(sub_data[0].keys())
-                    rows = [[str(item.get(h, "")) for h in headers] for item in sub_data]
-                    html += _render_table(headers, rows)
                 else:
-                    html += _render_table(list(sub_data[0].keys()), [[str(v) for v in item.values()] for item in sub_data])
+                    # Render as table — flatten any nested dicts in cell values
+                    headers = list(sub_data[0].keys())
+                    rows = []
+                    for item in sub_data:
+                        row = []
+                        for h in headers:
+                            cell = item.get(h, "")
+                            if isinstance(cell, dict):
+                                cell = cell.get("value", cell.get("name", str(cell)))
+                            row.append(str(cell))
+                        rows.append(row)
+                    html += _render_table(headers, rows)
             elif sub_data and isinstance(sub_data[0], str):
                 html += _render_list(sub_data)
         elif isinstance(sub_data, dict):
-            # Render dict as stat rows
-            stats = [{"label": k.replace("_", " ").title(), "value": str(v)} for k, v in sub_data.items() if not k.startswith("_")]
-            html += _render_stat_rows(stats)
+            # Check if this is a dict-of-dicts like return_scenarios: {bear: {moic, irr, ...}, base: {...}}
+            all_nested_dicts = all(isinstance(v, dict) for v in sub_data.values() if not isinstance(v, (str, int, float, list)))
+            nested_vals = [v for v in sub_data.values() if isinstance(v, dict)]
+            if nested_vals and len(nested_vals) == len(sub_data) and nested_vals[0] and "value" not in nested_vals[0]:
+                # Render as table: rows = scenario keys, cols = inner keys
+                inner_keys = list(nested_vals[0].keys())
+                headers = ["Scenario"] + [k.replace("_", " ").title() for k in inner_keys]
+                rows = []
+                for scenario_name, scenario_data in sub_data.items():
+                    row = [scenario_name.replace("_", " ").title()]
+                    for ik in inner_keys:
+                        cell = scenario_data.get(ik, "N/A")
+                        if isinstance(cell, dict):
+                            cell = cell.get("value", str(cell))
+                        row.append(str(cell))
+                    rows.append(row)
+                html += _render_table(headers, rows)
+            else:
+                # Render dict as stat rows — handle nested dicts like {"aov": {"value": "€45", "source": "url"}}
+                stats = []
+                for k, v in sub_data.items():
+                    if k.startswith("_"):
+                        continue
+                    label = k.replace("_", " ").title()
+                    if isinstance(v, dict):
+                        # Extract value from nested dict (LLM returns {"value": "...", "source": "..."})
+                        display_val = v.get("value", v.get("score", v.get("assessment", str(v))))
+                        source_url = v.get("source", v.get("source_url", ""))
+                        note = v.get("note", "")
+                        if source_url and source_url not in ("url", "#", "N/A", "Data not available"):
+                            note = f'<a href="{source_url}" target="_blank" rel="noopener noreferrer">Source</a>'
+                        stats.append({"label": label, "value": str(display_val) if display_val else "N/A", "note": note})
+                    else:
+                        stats.append({"label": label, "value": str(v)})
+                html += _render_stat_rows(stats)
         elif isinstance(sub_data, str):
             html += f'    <p>{_safe_html(sub_data)}</p>\n'
         else:
