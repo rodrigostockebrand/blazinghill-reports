@@ -383,12 +383,18 @@
     submissionResult.innerHTML = '';
 
     const brand = qs('brandInput').value.trim();
-    const domain = qs('domainInput').value.trim();
+    let domain = qs('domainInput').value.trim();
     const market = qs('marketInput').value;
     const lens = qs('lensInput').value;
     const notes = qs('notesInput').value.trim();
 
-    if (!brand || !domain || !market) return;
+    if (!brand || !domain || !market) {
+      alert('Please fill in the brand name, domain, and market.');
+      return;
+    }
+
+    // Clean domain: strip protocol, www, and trailing slashes
+    domain = domain.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/+$/, '');
 
     const submitBtn = deepDiveForm.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
