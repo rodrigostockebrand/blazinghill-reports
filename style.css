@@ -553,7 +553,6 @@ button { cursor: pointer; }
 .pricing-card.featured {
   background: linear-gradient(180deg, rgba(12,35,64,0.98), rgba(22,56,106,0.98));
   color: white;
-  transform: translateY(-10px);
 }
 
 .pricing-card.featured * { color: white; }
@@ -602,6 +601,17 @@ button { cursor: pointer; }
 
 .pricing-card.featured li::before { color: rgba(255,255,255,0.85); }
 .compact h3 { font-size: 2.4rem; }
+
+.app-pricing-grid {
+  align-items: start;
+}
+.app-pricing-grid .pricing-card {
+  display: flex;
+  flex-direction: column;
+}
+.app-pricing-grid .pricing-card .primary-btn {
+  margin-top: auto;
+}
 
 .demo-panel {
   border-radius: 30px;
