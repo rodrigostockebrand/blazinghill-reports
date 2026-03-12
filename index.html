@@ -525,11 +525,11 @@
         <p id="authModalSub">Register to access your workspace and start generating reports immediately.</p>
       </div>
       <p class="auth-perk" id="authPerk">Demo accounts receive 2 complimentary report credits — no credit card required.</p>
-      <form id="authForm">
+      <form id="authForm" novalidate>
         <div class="form-grid single">
-          <label>
+          <label id="authNameGroup">
             <span>Name</span>
-            <input id="authName" type="text" placeholder="Your name" required>
+            <input id="authName" type="text" placeholder="Your name">
           </label>
           <label>
             <span>Work email</span>
