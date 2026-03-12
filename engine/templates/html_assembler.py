@@ -79,11 +79,51 @@ def _render_table(headers, rows, sources=None):
     return html
 
 
+# ─── Label formatting for PE metrics ───
+_LABEL_FIXES = {
+    "Aov": "AOV", "Cac Paid": "CAC (Paid)", "Cac Blended": "CAC (Blended)",
+    "Ltv 3Yr": "LTV (3-Year)", "Ltv Cac Ratio": "LTV/CAC Ratio",
+    "Payback Months": "Payback Period (Months)", "Gross Margin": "Gross Margin",
+    "Ebitda": "EBITDA", "Ev Revenue": "EV/Revenue", "Ev Ebitda": "EV/EBITDA",
+    "Irr": "IRR", "Moic": "MOIC", "Roic": "ROIC", "Roas": "ROAS",
+    "Cac": "CAC", "Ltv": "LTV", "Aov Dynamics": "AOV Dynamics",
+    "Cpm": "CPM", "Ctr": "CTR", "Cpc": "CPC", "Cvr": "CVR",
+    "Nps": "NPS", "Rfm": "RFM", "Seo": "SEO", "Crm": "CRM",
+    "Da": "DA", "Dr": "DR", "Sov": "Share of Voice",
+    "Exit Revenue": "Exit Revenue", "Exit Multiple": "Exit Multiple",
+    "Tam": "TAM", "Sam": "SAM", "Som": "SOM",
+    "Fcf": "FCF", "Wacc": "WACC", "Capex": "CapEx",
+    "Gmv": "GMV", "Arpu": "ARPU", "Arr": "ARR", "Mrr": "MRR",
+}
+
+
+def _format_label(label):
+    """Fix common PE metric label formatting."""
+    if not label:
+        return label
+    # Direct match first
+    if label in _LABEL_FIXES:
+        return _LABEL_FIXES[label]
+    # Check title-cased version
+    title = label.replace("_", " ").title()
+    if title in _LABEL_FIXES:
+        return _LABEL_FIXES[title]
+    return label
+
+
 def _render_stat_rows(stats):
-    """Render stat-row items."""
+    """Render stat-row items — skip rows where ALL values in the group are N/A."""
+    # First, check if all values are N/A — if so, return empty
+    all_na = all(
+        str(s.get("value", "N/A")).strip().upper() in ("N/A", "NA", "", "NONE", "NULL", "0", "$0", "€0", "£0")
+        for s in stats
+    )
+    if all_na:
+        return ""
+
     html = ""
     for stat in stats:
-        label = _html_escape(stat.get("label", ""))
+        label = _format_label(_html_escape(stat.get("label", "")))
         value = _html_escape(stat.get("value", ""))
         note = stat.get("note", "")
         note_html = f'<span class="stat-note">{_html_escape(note)}</span>' if note else ""
@@ -228,7 +268,7 @@ def _render_generic_section(section_config, data, chart_paths, brand, idx):
                     html += _render_stat_rows(sub_data)
                 else:
                     # Render as table — flatten any nested dicts in cell values
-                    headers = list(sub_data[0].keys())
+                    headers = [_format_label(h.replace("_", " ").title()) for h in sub_data[0].keys()]
                     rows = []
                     for item in sub_data:
                         row = []
@@ -248,7 +288,7 @@ def _render_generic_section(section_config, data, chart_paths, brand, idx):
             if nested_vals and len(nested_vals) == len(sub_data) and nested_vals[0] and "value" not in nested_vals[0]:
                 # Render as table: rows = scenario keys, cols = inner keys
                 inner_keys = list(nested_vals[0].keys())
-                headers = ["Scenario"] + [k.replace("_", " ").title() for k in inner_keys]
+                headers = ["Scenario"] + [_format_label(k.replace("_", " ").title()) for k in inner_keys]
                 rows = []
                 for scenario_name, scenario_data in sub_data.items():
                     row = [scenario_name.replace("_", " ").title()]
@@ -265,7 +305,7 @@ def _render_generic_section(section_config, data, chart_paths, brand, idx):
                 for k, v in sub_data.items():
                     if k.startswith("_"):
                         continue
-                    label = k.replace("_", " ").title()
+                    label = _format_label(k.replace("_", " ").title())
                     if isinstance(v, dict):
                         # Extract value from nested dict (LLM returns {"value": "...", "source": "..."})
                         display_val = v.get("value", v.get("score", v.get("assessment", str(v))))
@@ -288,11 +328,12 @@ def _render_generic_section(section_config, data, chart_paths, brand, idx):
                         html += f'    <p>{_safe_html(alt_data)}</p>\n'
                     break
 
-    # Render any exhibits for this section
+    # Render any exhibits for this section (only if chart was actually generated)
     for chart_id in section_config.get("charts", []):
-        exhibit_num = chart_id.replace("ex", "Exhibit ").replace("_", " — ").title()
-        sources = data.get("sources", [])
-        html += _render_exhibit(chart_id, chart_paths, brand, f'{exhibit_num}', sources)
+        if chart_id in chart_paths:
+            exhibit_num = chart_id.replace("ex", "Exhibit ").replace("_", " — ").title()
+            sources = data.get("sources", [])
+            html += _render_exhibit(chart_id, chart_paths, brand, f'{exhibit_num}', sources)
 
     # Source attribution
     sources = data.get("sources", [])
