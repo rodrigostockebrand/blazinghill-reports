@@ -1,8 +1,12 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
+const stripe = require('stripe');
 const db = require('../db');
 
 const router = express.Router();
+
+// Stripe webhook secret for signature verification
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 
 // Plan config: maps Stripe product IDs to plan details
 const PLAN_CONFIG = {
@@ -12,15 +16,22 @@ const PLAN_CONFIG = {
 };
 
 // POST /api/webhook — Stripe webhook handler
-// In production, you'd verify the webhook signature with your Stripe webhook secret
 router.post('/', (req, res) => {
   let event;
   try {
     // req.body is raw Buffer from express.raw() middleware
-    event = JSON.parse(req.body.toString());
+    if (STRIPE_WEBHOOK_SECRET) {
+      // Verify Stripe signature in production
+      const sig = req.headers['stripe-signature'];
+      event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+    } else {
+      // No webhook secret configured — parse directly (dev/testing only)
+      console.warn('⚠ STRIPE_WEBHOOK_SECRET not set — skipping signature verification');
+      event = JSON.parse(req.body.toString());
+    }
   } catch (err) {
-    console.error('Webhook parse error:', err);
-    return res.status(400).json({ error: 'Invalid payload' });
+    console.error('Webhook verification failed:', err.message);
+    return res.status(400).json({ error: `Webhook Error: ${err.message}` });
   }
 
   console.log('Stripe webhook received:', event.type);
