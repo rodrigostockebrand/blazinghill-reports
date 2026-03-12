@@ -31,10 +31,13 @@ const ENV_VARS = {
 function runReport({ reportId, brandName, domain, market, analysisLens }, db) {
     return new Promise((resolve, reject) => {
         const projectRoot = path.join(__dirname, '..');
-        const outputDir = path.join(projectRoot, 'reports', reportId);
+        // Use persistent volume for reports so they survive deploys
+        const volumeMount = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
+        const reportsBase = volumeMount ? path.join(volumeMount, 'reports') : path.join(projectRoot, 'reports');
+        const outputDir = path.join(reportsBase, reportId);
 
         // Ensure reports directory exists
-        fs.mkdirSync(path.join(projectRoot, 'reports'), { recursive: true });
+        fs.mkdirSync(reportsBase, { recursive: true });
         fs.mkdirSync(outputDir, { recursive: true });
         fs.mkdirSync(path.join(outputDir, 'assets'), { recursive: true });
 
