@@ -30,6 +30,12 @@ app.use('/reports', (req, res, next) => {
   }
 
   const reportId = parts[0];
+
+  // Redirect /reports/<id> to /reports/<id>/ so relative paths resolve correctly
+  if (parts.length === 1 && !req.path.endsWith('/')) {
+    return res.redirect(301, `/reports/${reportId}/`);
+  }
+
   const subPath = parts.slice(1).join('/') || 'index.html';
   const reportDir = path.join(__dirname, '..', 'reports', reportId);
   const filePath = path.join(reportDir, subPath);
@@ -43,7 +49,7 @@ app.use('/reports', (req, res, next) => {
     return res.sendFile(filePath);
   }
 
-  // If requesting the report root, serve index.html
+  // If requesting the report root (with trailing slash), serve index.html
   if (parts.length === 1) {
     const indexPath = path.join(reportDir, 'index.html');
     if (fs.existsSync(indexPath)) {
