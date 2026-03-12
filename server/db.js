@@ -1,7 +1,9 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', 'data', 'blazinghill.db');
+// Use RAILWAY_VOLUME_MOUNT_PATH if available (persistent), otherwise fall back to local data/
+const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, '..', 'data');
+const DB_PATH = path.join(DATA_DIR, 'blazinghill.db');
 
 // Ensure data directory exists
 const fs = require('fs');
