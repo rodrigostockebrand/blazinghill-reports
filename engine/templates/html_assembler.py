@@ -92,6 +92,24 @@ def _render_stat_rows(stats):
     return html
 
 
+def _normalize_source(s):
+    """Normalize a source entry to {name, url} dict. Handles str or dict."""
+    if isinstance(s, dict):
+        return {"name": s.get("name", "Source"), "url": s.get("url", "#")}
+    if isinstance(s, str):
+        # Plain URL string
+        if s.startswith("http"):
+            # Extract domain as display name
+            try:
+                from urllib.parse import urlparse
+                domain = urlparse(s).netloc.replace("www.", "")
+                return {"name": domain or "Source", "url": s}
+            except Exception:
+                return {"name": "Source", "url": s}
+        return {"name": s, "url": "#"}
+    return {"name": "Source", "url": "#"}
+
+
 def _render_exhibit(chart_id, chart_paths, brand_name, title, sources=None):
     """Render a chart exhibit."""
     path = chart_paths.get(chart_id, "")
@@ -102,8 +120,9 @@ def _render_exhibit(chart_id, chart_paths, brand_name, title, sources=None):
     if sources:
         source_parts = []
         for s in sources[:3]:
-            name = s.get("name", "Source")
-            url = s.get("url", "#")
+            ns = _normalize_source(s)
+            name = ns["name"]
+            url = ns["url"]
             source_parts.append(f'<a href="{url}" target="_blank" rel="noopener noreferrer">{_html_escape(name)}</a>')
         source_html = " | Sources: " + ", ".join(source_parts)
 
@@ -119,8 +138,9 @@ def _render_source_line(sources):
         return ""
     parts = []
     for s in sources[:5]:
-        name = s.get("name", "Source")
-        url = s.get("url", "#")
+        ns = _normalize_source(s)
+        name = ns["name"]
+        url = ns["url"]
         parts.append(f'<a href="{url}" target="_blank" rel="noopener noreferrer">{_html_escape(name)}</a>')
     return f'    <p class="tiny text-muted mt-sm">Sources: {" · ".join(parts)}</p>\n'
 
