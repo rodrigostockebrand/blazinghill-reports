@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 BlazingHill Report Engine v2 — Simplified Architecture
-Single Perplexity research call → Single GPT-4o report generation call → HTML assembly
+3 Perplexity research calls (natural language) → GPT structuring → 3-batch GPT report generation → HTML assembly
 
-Replaces the old 4-phase pipeline (12 batch LLM calls, Python matplotlib charts, etc.)
-with a streamlined 3-step process that produces consistent, data-rich reports.
+Fixes stale/null data by letting Perplexity return natural language (where it's strongest)
+then using GPT to extract structured JSON from the findings.
 """
 
 import argparse
@@ -24,133 +24,7 @@ def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-# ─── Phase 1: Comprehensive Research via Perplexity ───
-
-RESEARCH_SYSTEM = """You are a senior private equity analyst conducting commercial due diligence.
-You must return ONLY valid JSON. No markdown, no code fences, no explanations.
-
-CRITICAL DATA ACCURACY RULES:
-1. Every data point must include its source URL where a human analyst can verify it.
-2. Be precise with numbers. Include currency symbols. Prefer exact figures over ranges.
-3. TODAY'S DATE is {today}. You MUST find the MOST RECENT data available.
-   - Revenue: find the latest fiscal year reported. Prioritize 2024/2025 data. Search for recent press releases, annual report announcements, and financial news.
-   - Social media followers: search for the CURRENT count. Look at platform analytics sites (e.g., SocialBlade, HypeAuditor) or recent news articles mentioning follower counts.
-   - Review ratings (Trustpilot, Google): search for the CURRENT live rating. Check recent reviews and current score.
-4. Distinguish between FOUNDING CITY (where the company originally started) and CURRENT HEADQUARTERS (where the main office is today). These are often different.
-5. For source URLs: ONLY include URLs you found in your search results. NEVER fabricate or guess URLs. If you have data but no specific URL, set source_url to null but STILL include the data point with the number.
-6. If you cannot find a specific data point at all, use null for the value. But TRY HARD to find it — search multiple queries.
-7. When you have data from an older year (e.g., 2023 revenue) but cannot find a newer figure, include it with the correct year — do NOT omit it entirely. An older data point is better than no data point."""
-
-RESEARCH_PROMPT = """Conduct exhaustive commercial due diligence research on {brand_name} ({domain}) in the {market} market.
-
-Research ALL of the following areas thoroughly. For each area, find SPECIFIC numbers, dates, and facts with source URLs.
-
-Return a single JSON object with these top-level keys:
-
-{{
-  "company": {{
-    "legal_name": "...",
-    "brand_name": "{brand_name}",
-    "domain": "{domain}",
-    "founded_year": "year",
-    "founded_city": "city where the company was originally founded/started",
-    "current_headquarters": "city where the HQ is located today (may differ from founding city)",
-    "founders": [{{"name": "...", "title": "...", "background": "..."}}],
-    "employee_count": number_or_null,
-    "business_model": "DTC / B2B / Marketplace / etc",
-    "product_categories": ["cat1", "cat2"],
-    "price_range": "$X-$Y",
-    "key_markets": ["market1"],
-    "unique_selling_points": ["usp1"],
-    "brand_positioning": "description",
-    "source_urls": ["url1", "url2"]
-  }},
-  "financials": {{
-    "revenue_history": [{{"year": 2025, "revenue": "$XM", "growth_yoy": "X%", "source_url": "url"}}],
-    "latest_revenue": {{"year": "MUST be most recent fiscal year available (2024 or 2025 preferred)", "amount": "$XM", "source_url": "url"}},
-    "gross_margin": {{"value": "X%", "basis": "reported/estimated", "source_url": "url"}},
-    "ebitda": {{"amount": "$XM", "margin": "X%", "source_url": "url_or_null"}},
-    "funding_rounds": [{{"round": "Series A", "amount": "$XM", "date": "YYYY", "investors": ["name"], "source_url": "url"}}],
-    "acquisitions": [{{"acquirer": "name", "date": "YYYY", "value": "$XM", "stake": "X%", "source_url": "url"}}],
-    "aov_estimate": "$X",
-    "repeat_purchase_rate": "X%",
-    "revenue_channels": {{"dtc_pct": "X%", "wholesale_pct": "X%", "marketplace_pct": "X%"}},
-    "geographic_revenue": [{{"region": "name", "pct": "X%"}}],
-    "source_urls": ["url1"]
-  }},
-  "competitors": {{
-    "direct": [
-      {{
-        "name": "Competitor Name",
-        "domain": "domain.com",
-        "revenue_est": "$XM",
-        "price_range": "$X-$Y",
-        "differentiator": "description",
-        "market_position": "leader/challenger/niche",
-        "social_followers": "XK",
-        "source_url": "url"
-      }}
-    ],
-    "market_size": {{"tam": "$XB", "sam": "$XB", "som": "$XM", "growth_rate": "X% CAGR", "source_url": "url"}},
-    "industry_trends": ["trend1", "trend2"],
-    "ma_comparables": [
-      {{"target": "company", "acquirer": "buyer", "year": 2024, "value": "$XM", "ev_revenue": "X.Xx", "source_url": "url"}}
-    ],
-    "source_urls": ["url1"]
-  }},
-  "digital_marketing": {{
-    "monthly_traffic": "XK visits",
-    "traffic_trend": "growing/stable/declining",
-    "top_channels": [{{"channel": "Organic Search", "pct": "X%"}}],
-    "top_countries": [{{"country": "US", "pct": "X%"}}],
-    "mobile_pct": "X%",
-    "domain_authority": number_or_null,
-    "backlinks": "XK",
-    "top_keywords": [{{"keyword": "term", "position": number, "volume": "XK/mo"}}],
-    "social_media": {{
-      "instagram": {{"followers": "XK", "engagement_rate": "X.X%", "handle": "@handle"}},
-      "tiktok": {{"followers": "XK", "handle": "@handle"}},
-      "facebook": {{"followers": "XK"}},
-      "youtube": {{"subscribers": "XK"}},
-      "twitter": {{"followers": "XK"}}
-    }},
-    "tech_stack": ["Shopify", "Google Analytics", "Klaviyo"],
-    "source_urls": ["url1"]
-  }},
-  "customer_sentiment": {{
-    "trustpilot": {{"rating": 4.2, "reviews": 5000, "source_url": "url"}},
-    "google_reviews": {{"rating": null, "reviews": null}},
-    "praise_themes": [{{"theme": "description", "frequency": "very common", "quote": "actual quote"}}],
-    "complaint_themes": [{{"theme": "description", "frequency": "common", "quote": "actual quote"}}],
-    "nps_estimate": number_or_null,
-    "source_urls": ["url1"]
-  }},
-  "operations": {{
-    "manufacturing": "own factory / contract / mixed",
-    "manufacturing_locations": ["country1"],
-    "logistics": "3PL / in-house",
-    "fulfillment_centers": ["location1"],
-    "supply_chain_risks": ["risk1"],
-    "regulatory": {{
-      "gdpr_applicable": true,
-      "product_safety": ["regulation1"],
-      "key_risks": ["risk1"]
-    }},
-    "source_urls": ["url1"]
-  }}
-}}
-
-CRITICAL REQUIREMENTS:
-1. Revenue: Find the MOST RECENT fiscal year results (2024 or 2025). Revenue from 2022 or earlier is NOT acceptable for "latest_revenue" — search harder.
-2. Include at least 3 years of revenue data. If only older data exists publicly, include it BUT also search for the most recent annual reports, press releases, or news articles for current figures.
-3. Social media: Report CURRENT follower counts as of today — not figures from old articles. Check the actual platform pages.
-4. Trustpilot/review ratings: Report the CURRENT live rating — not what an article from years ago stated.
-5. Founding: Clearly distinguish where the company was FOUNDED vs. where its headquarters are TODAY.
-6. Include at least 5 direct competitors with revenue estimates and at least 3 M&A comparables.
-7. Every source_url must be a real URL from your search results. NEVER fabricate or guess URLs. If you found a data point but don't have a direct URL, set source_url to null but STILL include the data value.
-8. Use the company's native currency for revenue (e.g., £ for UK companies, € for EU companies) and also provide USD equivalent.
-9. SEARCH THOROUGHLY. If your first search didn't find revenue, try searching for "[brand] annual revenue 2025", "[brand] financial results", "[brand] annual report". Search multiple ways before giving up."""
-
+# ─── Phase 1: Research via Perplexity (natural language) + GPT structuring ───
 
 def _perplexity_call(system_msg, user_msg, max_tokens=4000):
     """Make a single Perplexity API call and return (content, citations)."""
@@ -179,52 +53,236 @@ def _perplexity_call(system_msg, user_msg, max_tokens=4000):
     return content, citations
 
 
+def _gpt_call(system_msg, user_msg, max_tokens=4000):
+    """Make a GPT API call and return the response content."""
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": "gpt-4.1",
+            "messages": [
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.0,
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data["choices"][0]["message"]["content"]
+
+
 def run_research(brand_name, domain, market):
-    """Phase 1: Run comprehensive research via 3 parallel focused Perplexity calls."""
+    """Phase 1: Run research via 3 parallel Perplexity calls (natural language),
+    then structure with GPT."""
     from datetime import datetime
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import re as _re
 
-    log("Phase 1: Researching via Perplexity (3 parallel focused calls)...")
+    log("Phase 1: Researching via Perplexity (3 parallel natural-language calls)...")
     today = datetime.now().strftime("%B %d, %Y")
 
     if not PERPLEXITY_API_KEY:
         raise RuntimeError("PERPLEXITY_API_KEY not set")
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY not set")
 
-    system = RESEARCH_SYSTEM.format(today=today)
+    pplx_system = f"""You are a senior research analyst. Today's date is {today}.
+Answer thoroughly with specific numbers, dates, and facts. Cite your sources.
+Be precise — include exact figures, currencies, percentages.
+When information is from different years, clearly state which year each figure is from.
+Always prioritize the MOST RECENT data available."""
 
-    # --- Call 1: Company + Financials (the core DD facts) ---
-    prompt_core = f"""Research {brand_name} ({domain}). Today's date is {today}.
+    # --- Call 1: Company + Financials ---
+    prompt_core = f"""Research {brand_name} ({domain}) thoroughly. I need:
 
-Find and return ONLY valid JSON with these fields:
+1. COMPANY BASICS: Legal name, founding year, founding city (where it was ORIGINALLY started, not where HQ moved later), current headquarters city, founders (names, roles, backgrounds), employee count, business model (DTC/B2B/etc), product categories, price range, key markets, USPs, brand positioning.
+
+2. FINANCIALS: Most recent annual revenue (search for "{brand_name} revenue 2025", "{brand_name} financial results", "{brand_name} annual report 2025"). Include the currency (£ for UK companies). Revenue history for at least 3 years. Gross margin, EBITDA if available. Any funding rounds or acquisitions (especially the 2020 General Atlantic deal). AOV estimates, repeat purchase rate, revenue channel split (DTC vs wholesale), geographic revenue breakdown.
+
+3. OPERATIONS: Manufacturing model, locations, logistics/fulfillment, supply chain risks, regulatory considerations.
+
+Be thorough — search multiple queries for revenue. If the company recently reported results, find the exact figures."""
+
+    # --- Call 2: Digital + Social + Reviews ---
+    prompt_digital = f"""Research the digital presence and customer reviews of {brand_name} ({domain}). I need CURRENT data as of {today}:
+
+1. WEBSITE TRAFFIC: Monthly visits, traffic trend, top channels (organic/paid/direct/social percentages), top countries, mobile percentage, domain authority, backlinks count, top organic keywords with search volume.
+
+2. SOCIAL MEDIA (search for current follower counts, NOT old articles):
+   - Instagram: Search "how many Instagram followers does {brand_name} have" or "{brand_name} Instagram followers 2026". What is the CURRENT count?
+   - TikTok: Current followers
+   - Facebook, YouTube, Twitter/X: Current followers/subscribers
+
+3. CUSTOMER REVIEWS:
+   - Trustpilot: Search "Trustpilot {brand_name}" or go to trustpilot.com/review/{domain}. What is the CURRENT star rating and total number of reviews? NOT what an old article says — the actual current rating.
+   - Google Reviews if available
+   - Common praise themes with actual customer quotes
+   - Common complaint themes with actual customer quotes
+
+4. TECH STACK: E-commerce platform, analytics, email marketing, etc.
+
+Important: For social followers and review ratings, I need TODAY'S numbers, not figures from articles written years ago."""
+
+    # --- Call 3: Competitors + Market ---
+    prompt_market = f"""Research the competitive landscape for {brand_name} ({domain}) in the {market} market. I need:
+
+1. DIRECT COMPETITORS: At least 5-6 real competitors with their estimated revenue, price range, key differentiator, market position (leader/challenger/niche), and social media following. Companies like Lululemon, Nike, Under Armour, Alo Yoga, Alphalete, YoungLA, etc.
+
+2. MARKET SIZE: Total addressable market (TAM), serviceable addressable market (SAM), serviceable obtainable market (SOM), and market growth rate (CAGR). Include the source for these figures.
+
+3. INDUSTRY TRENDS: Key trends shaping the {market} market.
+
+4. M&A COMPARABLES: At least 3 recent acquisitions or investments in the {market} space with deal values and EV/Revenue multiples. Include the General Atlantic deal with {brand_name} if applicable."""
+
+    # Run all 3 Perplexity calls in parallel
+    all_citations = []
+    raw_findings = {}
+
+    def do_pplx_call(name, prompt, max_tok):
+        log(f"  Perplexity call: {name}...")
+        content, cites = _perplexity_call(pplx_system, prompt, max_tok)
+        log(f"  {name}: {len(content)} chars, {len(cites)} citations")
+        return name, content, cites
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [
+            executor.submit(do_pplx_call, "core", prompt_core, 4000),
+            executor.submit(do_pplx_call, "digital", prompt_digital, 4000),
+            executor.submit(do_pplx_call, "market", prompt_market, 4000),
+        ]
+        for future in as_completed(futures):
+            try:
+                name, content, cites = future.result()
+                raw_findings[name] = content
+                all_citations.extend(cites)
+            except Exception as e:
+                log(f"  ERROR in Perplexity call: {e}")
+                raw_findings[name] = f"Error: {str(e)}"
+
+    # Deduplicate citations
+    seen = set()
+    unique_citations = []
+    for c in all_citations:
+        if c not in seen:
+            seen.add(c)
+            unique_citations.append(c)
+
+    log(f"Perplexity research done. {len(unique_citations)} unique citations.")
+    log(f"  core: {len(raw_findings.get('core',''))} chars")
+    log(f"  digital: {len(raw_findings.get('digital',''))} chars")
+    log(f"  market: {len(raw_findings.get('market',''))} chars")
+
+    # --- Phase 1b: Use GPT to structure the findings into JSON ---
+    log("Phase 1b: Structuring research via GPT...")
+
+    citations_text = "\n".join(f"[{i+1}] {url}" for i, url in enumerate(unique_citations))
+
+    structure_system = """You are a data extraction specialist. Extract structured JSON from research findings.
+Return ONLY valid JSON — no markdown, no code fences, no explanations.
+Rules:
+1. Extract EVERY specific number, date, and fact mentioned in the findings.
+2. For source_url fields: ONLY use URLs from the CITATIONS list provided. If a fact doesn't have a citation, set source_url to null.
+3. NEVER fabricate or guess URLs. Only use URLs from the citations list.
+4. If a data point is not mentioned in the findings at all, use null.
+5. Prefer the most recent data when multiple years are available."""
+
+    structure_prompt = f"""Extract structured data from these research findings about {brand_name} ({domain}).
+
+RESEARCH FINDINGS - COMPANY & FINANCIALS:
+{raw_findings.get('core', 'No data')}
+
+RESEARCH FINDINGS - DIGITAL & REVIEWS:
+{raw_findings.get('digital', 'No data')}
+
+RESEARCH FINDINGS - COMPETITORS & MARKET:
+{raw_findings.get('market', 'No data')}
+
+AVAILABLE CITATION URLs (only use these for source_url fields):
+{citations_text}
+
+Extract into this JSON structure:
 {{
   "company": {{
-    "legal_name": "...",
+    "legal_name": "string or null",
     "brand_name": "{brand_name}",
     "domain": "{domain}",
     "founded_year": "year",
     "founded_city": "city where originally founded/started",
-    "current_headquarters": "city where main office is today",
+    "current_headquarters": "city where HQ is today (may differ from founding city)",
     "founders": [{{"name": "...", "title": "...", "background": "..."}}],
     "employee_count": number_or_null,
-    "business_model": "DTC / B2B / Marketplace / etc",
+    "business_model": "DTC / B2B / etc",
     "product_categories": ["cat1", "cat2"],
     "price_range": "$X-$Y",
     "key_markets": ["market1"],
     "unique_selling_points": ["usp1"],
     "brand_positioning": "description",
-    "source_urls": ["url1", "url2"]
+    "source_urls": ["url1"]
   }},
   "financials": {{
     "revenue_history": [{{"year": 2025, "revenue": "amount with currency", "growth_yoy": "X%", "source_url": "url_or_null"}}],
-    "latest_revenue": {{"year": 2025, "amount": "amount with currency", "source_url": "url_or_null"}},
+    "latest_revenue": {{"year": 2025, "amount": "amount with currency symbol", "source_url": "url_or_null"}},
     "gross_margin": {{"value": "X%", "basis": "reported/estimated", "source_url": "url_or_null"}},
     "ebitda": {{"amount": "$XM", "margin": "X%", "source_url": "url_or_null"}},
     "funding_rounds": [{{"round": "Series A", "amount": "$XM", "date": "YYYY", "investors": ["name"], "source_url": "url_or_null"}}],
+    "acquisitions": [{{"acquirer": "name", "date": "YYYY", "value": "$XM", "stake": "X%", "source_url": "url_or_null"}}],
     "aov_estimate": "$X",
     "repeat_purchase_rate": "X%",
     "revenue_channels": {{"dtc_pct": "X%", "wholesale_pct": "X%", "marketplace_pct": "X%"}},
     "geographic_revenue": [{{"region": "name", "pct": "X%"}}],
+    "source_urls": ["url1"]
+  }},
+  "competitors": {{
+    "direct": [
+      {{
+        "name": "Real Company Name",
+        "domain": "domain.com",
+        "revenue_est": "amount with currency",
+        "price_range": "$X-$Y",
+        "differentiator": "description",
+        "market_position": "leader/challenger/niche",
+        "social_followers": "XK or XM",
+        "source_url": "url_or_null"
+      }}
+    ],
+    "market_size": {{"tam": "$XB", "sam": "$XB", "som": "$XM", "growth_rate": "X% CAGR", "source_url": "url_or_null"}},
+    "industry_trends": ["trend1", "trend2"],
+    "ma_comparables": [
+      {{"target": "company", "acquirer": "buyer", "year": 2024, "value": "$XM", "ev_revenue": "X.Xx", "source_url": "url_or_null"}}
+    ],
+    "source_urls": ["url1"]
+  }},
+  "digital_marketing": {{
+    "monthly_traffic": "XM visits",
+    "traffic_trend": "growing/stable/declining",
+    "top_channels": [{{"channel": "Organic Search", "pct": "X%"}}],
+    "top_countries": [{{"country": "US", "pct": "X%"}}],
+    "mobile_pct": "X%",
+    "domain_authority": number_or_null,
+    "backlinks": "XK",
+    "top_keywords": [{{"keyword": "term", "position": number, "volume": "XK/mo"}}],
+    "social_media": {{
+      "instagram": {{"followers": "XM", "engagement_rate": "X.X%", "handle": "@handle"}},
+      "tiktok": {{"followers": "XM", "handle": "@handle"}},
+      "facebook": {{"followers": "XK"}},
+      "youtube": {{"subscribers": "XK"}},
+      "twitter": {{"followers": "XK"}}
+    }},
+    "tech_stack": ["platform1"],
+    "source_urls": ["url1"]
+  }},
+  "customer_sentiment": {{
+    "trustpilot": {{"rating": number, "reviews": number, "source_url": "url_or_null"}},
+    "google_reviews": {{"rating": null, "reviews": null}},
+    "praise_themes": [{{"theme": "description", "frequency": "very common", "quote": "actual customer quote"}}],
+    "complaint_themes": [{{"theme": "description", "frequency": "common", "quote": "actual customer quote"}}],
+    "nps_estimate": number_or_null,
     "source_urls": ["url1"]
   }},
   "operations": {{
@@ -238,141 +296,50 @@ Find and return ONLY valid JSON with these fields:
   }}
 }}
 
-CRITICAL: Find the MOST RECENT revenue figure. Search for "{brand_name} revenue 2025" and "{brand_name} financial results 2025" and "{brand_name} annual report". Use the company's native currency (e.g., \u00a3 for UK companies). Include at least 3 years of revenue history.
-Founding city and HQ city may differ — verify both separately."""
+CRITICAL: Extract EVERY number mentioned in the findings. If the findings say "revenue of £646M" — include it.
+If the findings mention "3.2 stars on Trustpilot" — include it. If "8.3M Instagram followers" — include it.
+For revenue, use the native currency mentioned (£ for UK companies) and include the year."""
 
-    # --- Call 2: Digital, Social, Reviews (live metrics) ---
-    prompt_digital = f"""Research the digital presence and customer sentiment of {brand_name} ({domain}). Today's date is {today}.
+    gpt_response = _gpt_call(structure_system, structure_prompt, 6000)
+    research = _parse_json(gpt_response)
 
-Find CURRENT live data — not figures from old articles. Check platform analytics sites.
-
-Return ONLY valid JSON:
-{{
-  "digital_marketing": {{
-    "monthly_traffic": "XM visits",
-    "traffic_trend": "growing/stable/declining",
-    "top_channels": [{{"channel": "Organic Search", "pct": "X%"}}],
-    "top_countries": [{{"country": "US", "pct": "X%"}}],
-    "mobile_pct": "X%",
-    "domain_authority": number_or_null,
-    "backlinks": "XK",
-    "top_keywords": [{{"keyword": "term", "position": number, "volume": "XK/mo"}}],
-    "social_media": {{
-      "instagram": {{"followers": "XM or XK", "engagement_rate": "X.X%", "handle": "@handle"}},
-      "tiktok": {{"followers": "XM or XK", "handle": "@handle"}},
-      "facebook": {{"followers": "XK"}},
-      "youtube": {{"subscribers": "XK"}},
-      "twitter": {{"followers": "XK"}}
-    }},
-    "tech_stack": ["platform1", "platform2"],
-    "source_urls": ["url1"]
-  }},
-  "customer_sentiment": {{
-    "trustpilot": {{"rating": number, "reviews": number, "source_url": "url_or_null"}},
-    "google_reviews": {{"rating": null, "reviews": null}},
-    "praise_themes": [{{"theme": "description", "frequency": "very common", "quote": "actual customer quote"}}],
-    "complaint_themes": [{{"theme": "description", "frequency": "common", "quote": "actual customer quote"}}],
-    "nps_estimate": number_or_null,
-    "source_urls": ["url1"]
-  }}
-}}
-
-CRITICAL: For Instagram, search "{brand_name} Instagram followers 2026" or check social analytics sites.
-For Trustpilot, search "Trustpilot {brand_name}" to find the CURRENT rating — NOT what an old article says.
-Report the CURRENT numbers as of today, not historical figures from years ago."""
-
-    # --- Call 3: Competitors + Market (industry context) ---
-    prompt_market = f"""Research the competitive landscape and market context for {brand_name} ({domain}) in the {market} market. Today's date is {today}.
-
-Return ONLY valid JSON:
-{{
-  "competitors": {{
-    "direct": [
-      {{
-        "name": "Competitor Name",
-        "domain": "domain.com",
-        "revenue_est": "$XM or native currency",
-        "price_range": "$X-$Y",
-        "differentiator": "description",
-        "market_position": "leader/challenger/niche",
-        "social_followers": "XK",
-        "source_url": "url_or_null"
-      }}
-    ],
-    "market_size": {{"tam": "$XB", "sam": "$XB", "som": "$XM", "growth_rate": "X% CAGR", "source_url": "url_or_null"}},
-    "industry_trends": ["trend1", "trend2"],
-    "ma_comparables": [
-      {{"target": "company", "acquirer": "buyer", "year": 2024, "value": "$XM", "ev_revenue": "X.Xx", "source_url": "url_or_null"}}
-    ],
-    "source_urls": ["url1"]
-  }}
-}}
-
-Include at least 5 direct competitors with real revenue estimates and at least 3 recent M&A comparables in the {market} sector."""
-
-    # Run all 3 calls in parallel
-    all_citations = []
-    results = {}
-
-    def do_call(name, prompt, max_tok):
-        log(f"  Research call: {name}...")
-        content, cites = _perplexity_call(system, prompt, max_tok)
-        log(f"  {name}: {len(content)} chars, {len(cites)} citations")
-        return name, content, cites
-
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [
-            executor.submit(do_call, "core", prompt_core, 4000),
-            executor.submit(do_call, "digital", prompt_digital, 4000),
-            executor.submit(do_call, "market", prompt_market, 4000),
-        ]
-        for future in as_completed(futures):
+    if not research:
+        import re as _re
+        json_match = _re.search(r'\{[\s\S]*\}', gpt_response)
+        if json_match:
             try:
-                name, content, cites = future.result()
-                parsed = _parse_json(content)
-                if not parsed:
-                    json_match = _re.search(r'\{[\s\S]*\}', content)
-                    if json_match:
-                        try:
-                            parsed = json.loads(json_match.group())
-                        except:
-                            log(f"  WARN: Could not parse {name} response")
-                            parsed = {}
-                    else:
-                        log(f"  WARN: No JSON in {name} response")
-                        parsed = {}
-                results[name] = parsed
-                all_citations.extend(cites)
-            except Exception as e:
-                log(f"  ERROR in research call: {e}")
-                results[name] = {}
+                research = json.loads(json_match.group())
+            except:
+                log("WARN: Could not parse GPT structuring response")
+                research = {}
+        else:
+            log("WARN: No JSON in GPT structuring response")
+            research = {}
 
-    # Merge all results into one research object
-    research = {}
-    for name, data in results.items():
-        for key, value in data.items():
-            if key not in research or research[key] is None:
-                research[key] = value
-            elif isinstance(value, dict) and isinstance(research.get(key), dict):
-                # Deep merge: fill in nulls from the new data
-                for k, v in value.items():
-                    if k not in research[key] or research[key][k] is None:
-                        research[key][k] = v
-
-    # Deduplicate citations
-    seen = set()
-    unique_citations = []
-    for c in all_citations:
-        if c not in seen:
-            seen.add(c)
-            unique_citations.append(c)
-
+    # Attach citations and raw findings for transparency
     research["_citations"] = unique_citations
-    log(f"Research complete. Keys: {list(research.keys())}, {len(unique_citations)} unique citations")
+    research["_raw_findings"] = raw_findings
+
+    log(f"Research complete. Keys: {[k for k in research.keys() if not k.startswith('_')]}, {len(unique_citations)} citations")
+
+    # Log key metrics for debugging
+    financials = research.get("financials", {})
+    latest_rev = financials.get("latest_revenue", {})
+    sentiment = research.get("customer_sentiment", {})
+    tp = sentiment.get("trustpilot", {})
+    digital = research.get("digital_marketing", {})
+    social = digital.get("social_media", {})
+    ig = social.get("instagram", {})
+    company = research.get("company", {})
+    log(f"  Revenue: {latest_rev}")
+    log(f"  Trustpilot: {tp}")
+    log(f"  Instagram: {ig}")
+    log(f"  Founded: {company.get('founded_city')} | HQ: {company.get('current_headquarters')}")
+
     return research
 
 
-# ─── Phase 2: Generate full report HTML via GPT-4o ───
+# ─── Phase 2: Generate full report HTML via GPT-4.1 ───
 
 REPORT_SYSTEM = """You are a McKinsey-grade PE due diligence report writer.
 You produce investment-quality HTML report content for senior private equity partners.
@@ -398,178 +365,6 @@ DATA RECENCY RULES (CRITICAL):
 13. Use the MOST RECENT revenue figure from the research. If multiple years are available, highlight the latest one prominently.
 14. Founding city and current HQ city may differ — check the research data for both fields and use them correctly.
 15. Social media followers and review ratings should reflect current figures from the research, not historical ones."""
-
-
-def _build_report_prompt(brand_name, domain, market, research_data):
-    """Build the mega-prompt for report generation."""
-
-    # Clean research data for prompt (remove internal keys)
-    clean_research = {k: v for k, v in research_data.items() if not k.startswith("_")}
-    research_json = json.dumps(clean_research, indent=2, default=str)
-
-    # Get citations list
-    citations = research_data.get("_citations", [])
-    citations_text = "\n".join(f"[{i+1}] {url}" for i, url in enumerate(citations)) if citations else "No citations available"
-
-    return f"""Using the research data below, generate a complete PE due diligence report for {brand_name} ({domain}) in the {market} market.
-
-RESEARCH DATA:
-{research_json}
-
-CITATIONS FROM RESEARCH:
-{citations_text}
-
-OUTPUT FORMAT:
-Return a sequence of HTML section blocks. Each section must follow this exact structure:
-
-<section class="section" id="sXX">
-  <div class="section-label">Section XX</div>
-  <h2>Section Title</h2>
-  <p class="section-intro">Substantive intro paragraph with data points and <a href="SOURCE_URL" target="_blank">source links</a>.</p>
-
-  <h3 class="subsection">Subsection Title</h3>
-  <!-- Content: tables, stat-rows, charts, paragraphs, lists -->
-</section>
-
-COMPONENT TEMPLATES:
-
-KPI Cards (use in Executive Summary):
-<div class="kpi-grid">
-  <div class="kpi-card kpi-navy">
-    <div class="kpi-label">METRIC NAME</div>
-    <div class="kpi-value">$28.3M</div>
-    <div class="kpi-sub">+40% YoY growth</div>
-    <div class="kpi-source"><a href="URL" target="_blank">Source Name</a></div>
-  </div>
-</div>
-
-Tables:
-<div class="table-wrap">
-  <table>
-    <thead><tr><th>Column 1</th><th>Column 2</th><th>Source</th></tr></thead>
-    <tbody>
-      <tr><td>Data</td><td>$10M</td><td><a href="URL" target="_blank">source.com</a></td></tr>
-    </tbody>
-  </table>
-</div>
-
-Stat Rows:
-<div class="stat-row"><span class="stat-label">Revenue FY2024</span><span class="stat-value">$28.3M</span><span class="stat-note"><a href="URL" target="_blank">Source</a></span></div>
-
-Risk Tags:
-<span class="tag tag-risk">High Risk</span>
-<span class="tag tag-opp">Opportunity</span>
-<span class="tag tag-watch">Watch</span>
-
-Chart.js (wrap in a <div> with a <canvas>):
-<div class="chart-container" style="position:relative;height:350px;margin:24px 0;">
-  <canvas id="chartUniqueId"></canvas>
-</div>
-<script>
-new Chart(document.getElementById('chartUniqueId'), {{
-  type: 'bar',
-  data: {{
-    labels: ['2021', '2022', '2023', '2024'],
-    datasets: [{{
-      label: 'Revenue ($M)',
-      data: [15.2, 18.7, 22.1, 28.3],
-      backgroundColor: ['#e2e8f0', '#e2e8f0', '#e2e8f0', '#2563eb']
-    }}]
-  }},
-  options: {{
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {{ legend: {{ display: false }}, title: {{ display: true, text: 'Revenue Growth Trajectory' }} }}
-  }}
-}});
-</script>
-<p class="tiny text-muted">Sources: <a href="URL" target="_blank">source.com</a></p>
-
-Thesis Box (for Investment Thesis):
-<div class="thesis-box">Investment thesis paragraph here...</div>
-
-Lists:
-<ul class="report-list"><li><strong>Key Point</strong> — Description with data</li></ul>
-
-CHART TYPES TO USE (with real data from research):
-- Bar charts: Revenue history, competitor comparison, pricing tiers, budget allocation
-- Horizontal bar: Market share, channel mix, geographic distribution
-- Line charts: Traffic trends, retention curves, CPM trends
-- Doughnut/Pie: Revenue channel mix, geographic concentration, traffic sources
-- Radar: Competitive positioning (5-7 dimensions), AI readiness, brand equity dimensions
-- Stacked bar: Scenario analysis (bear/base/bull), EBITDA bridge, contribution margin
-- Scatter: M&A comparables (EV/Revenue vs Revenue)
-- Mixed (bar+line): Revenue with growth rate overlay, AOV trends
-
-IMPORTANT CHART RULES:
-- Every chart must use REAL data from the research — never random or placeholder numbers
-- Use real competitor names from the research data — never "Comp 1" or "Competitor A"
-- Every chart canvas ID must be unique (e.g., chart_revenue, chart_competitors, chart_radar)
-- Include source attribution below every chart
-- Use these colors: Navy #1a2332, Blue #2563eb, Green #16a34a, Amber #d97706, Red #dc2626, Gray tones for secondary data
-
-GENERATE THESE 50 SECTIONS (in order, numbered 01-50):
-
-01. Executive Summary — KPI cards (6-8), investment thesis box, key risks & opportunities table
-02. Company Profile — Corporate fundamentals stat-rows, product portfolio list, revenue timeline table, transaction summary table
-03. PE Economics — EBITDA analysis table, unit economics stat-rows (AOV, CAC, LTV, LTV/CAC, payback, gross margin), M&A comparables table, return scenarios (bear/base/bull) table, Chart: EBITDA waterfall
-04. Digital Marketing Performance — Traffic overview stat-rows, channel mix table, geo distribution table, marketing funnel metrics, Chart: Traffic channel bar chart
-05. Competitive Intelligence — Competitor comparison table (5+ competitors with revenue, traffic, positioning), Chart: Radar chart comparing brand vs top 2-3 competitors on 6 dimensions
-06. AI & Innovation Assessment — Overall score stat-row, capability assessment table, AI transfer plan phases, Chart: AI readiness heatmap
-07. Risk Assessment — Risk matrix table (risk, likelihood, impact, severity, mitigation), channel dependency analysis, Chart: Risk severity horizontal bars
-08. Channel Economics — ROAS by channel table, Meta CPM trend table, Chart: Channel ROI bar chart
-09. Cohort Analysis — DTC retention benchmark table, LTV build components, Chart: Retention decay curve (line)
-10. TAM / SAM / SOM — Market sizing stat-rows with sources, growth dynamics, Chart: TAM/SAM/SOM nested visualization
-11. Customer Sentiment — Aggregate ratings table, praise themes table with quotes, complaint themes with quotes, Chart: Sentiment distribution (stacked bar)
-12. Content Strategy Gap — SEO opportunity analysis, high-value keyword table, content roadmap phases
-13. Value Creation Roadmap — Value lever table (lever, year 1 impact, year 3 impact, confidence), DTC acquisition case studies table
-14. Pricing Strategy & Architecture — Pricing tier table, competitive pricing map table, pricing maturity score, Chart: Pricing architecture comparison (horizontal bar)
-15. Revenue Quality & Concentration — Revenue growth table, channel mix, geographic concentration, Chart: Revenue concentration doughnut
-16. Management & Organization — Founding team profiles, company structure, key person risk assessment
-17. Technology Stack Assessment — Core platform table, payment infrastructure, tech gap analysis table
-18. Brand Equity Deep Dive — Review breakdown table, positive/negative themes, brand dimensions, Chart: Brand equity radar
-19. Supply Chain & Fulfillment — Manufacturing model, post-acquisition synergies table
-20. Regulatory & Compliance — GDPR assessment, local regulations table, product safety, regulatory timeline
-21. Working Capital & Cash Dynamics — Cash conversion cycle stat-rows, FCF build analysis, seasonal dynamics
-22. Exit Analysis & M&A Comparables — M&A comps table, exit path analysis, Chart: M&A scatter (EV/Revenue vs Revenue)
-23. Geographic Expansion Roadmap — Priority markets table, expansion phasing with timeline
-24. Marketing-Adjusted LTV Model — LTV scenario table, impact waterfall breakdown, Chart: LTV waterfall
-25. CAC Payback & Efficiency — CAC by channel table, organic vs paid comparison, Chart: CAC payback bar chart
-26. Contribution Margin Bridge — Margin bridge steps, optimization opportunities, Chart: Contribution margin bridge (waterfall)
-27. Marketing P&L & Budget Allocation — Budget allocation table, full-funnel architecture, Chart: Marketing spend pie chart
-28. Customer Segmentation & RFM — RFM segment table, LTV amplification strategies
-29. Repeat Purchase & Retention — Retention analysis, structural constraints, Chart: Retention curve (line)
-30. AOV Dynamics & Uplift Levers — AOV by geography table, uplift roadmap
-31. NPS & Voice of Customer — VOC theme decomposition table, NPS estimate analysis
-32. Customer Journey & Funnel — Full-funnel stage analysis table, Chart: Conversion funnel (horizontal bars)
-33. SEO Authority & Organic Position — Domain authority comparison, keyword gap analysis table, Chart: SEO comparison (bar)
-34. Paid Media Performance — Paid media efficiency metrics, ROAS benchmarks
-35. Email & CRM Maturity — CRM maturity audit table, email revenue upside analysis
-36. CRO Analysis — Conversion audit findings, mobile-first priorities
-37. Social Commerce & Influencer ROI — UGC program assessment, influencer scale analysis
-38. Share of Voice Analysis — Competitive social footprint table, SOV analysis
-39. Price Elasticity & Discounting — Discount dependency assessment, exit roadmap from promotions
-40. Category Disruption Threats — Threat matrix table with probability and impact
-41. Cross-Border E-Commerce — Localization scorecard table, market entry analysis
-42. Brand Trademark & IP Valuation — IP asset inventory, licensing potential
-43. First-Party Data Asset — Data valuation analysis, GDPR compliance checklist
-44. Content & Creative Library — Content asset inventory, production model, reusability assessment
-45. MarTech Stack ROI — Confirmed tech stack table, optimization recommendations
-46. 100-Day Post-Close Plan — Phased action plan table (Day 1-30, 31-60, 61-100), budget reallocation
-47. EBITDA Bridge — Marketing-driven EBITDA levers table, Chart: EBITDA bridge waterfall
-48. Scenario Analysis — Bull/Base/Bear assumptions table, key sensitivity drivers, Chart: Scenario comparison (grouped bar with Revenue, EBITDA, MOIC, IRR for each case)
-49. Investment Committee Summary — Deal scorecard (10 dimensions scored 1-10), red flags list, final investment thesis, conditions precedent, return summary, Chart: Deal scorecard radar
-50. Appendix — Data sources table, methodology notes
-
-CRITICAL REQUIREMENTS:
-- Use ONLY real data from the research. If a data point is unavailable, estimate from industry benchmarks and mark with "(Est.)"
-- Include 15-20 Chart.js charts distributed throughout the report where specified above
-- Every table must have real, populated rows — never empty tables
-- Source URLs must be real and clickable — use citations from the research
-- Write for senior PE partners — assume financial sophistication
-- Each section must have substantial content (not just one sentence)
-- Competitor names must be real companies from the research, never generic labels
-"""
 
 
 # Section definitions for batch splitting
@@ -1115,11 +910,18 @@ def run_pipeline(brand_name, domain, market, analysis_lens, report_id, output_di
         # Phase 1: Research
         research = run_research(brand_name, domain, market)
 
-        # Save research data
+        # Save research data (exclude raw findings to keep file manageable)
+        research_save = {k: v for k, v in research.items() if k != "_raw_findings"}
         research_path = os.path.join(output_dir, "research.json")
         with open(research_path, "w") as f:
-            json.dump(research, f, indent=2, default=str)
+            json.dump(research_save, f, indent=2, default=str)
         log(f"Research saved to {research_path}")
+
+        # Also save raw findings for debugging
+        raw_path = os.path.join(output_dir, "research_raw.json")
+        with open(raw_path, "w") as f:
+            json.dump(research.get("_raw_findings", {}), f, indent=2, default=str)
+        log(f"Raw findings saved to {raw_path}")
 
         # Phase 2: Generate report HTML body
         report_body = run_report_generation(brand_name, domain, market, research, output_dir)
