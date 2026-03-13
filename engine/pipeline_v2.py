@@ -316,6 +316,115 @@ For revenue, use the native currency mentioned (£ for UK companies) and include
             log("WARN: No JSON in GPT structuring response")
             research = {}
 
+    # --- Phase 1c: Gap-filling for critical missing data ---
+    log("Phase 1c: Checking for critical data gaps...")
+
+    gap_queries = []
+    financials = research.get("financials", {})
+    latest_rev = financials.get("latest_revenue", {})
+    sentiment = research.get("customer_sentiment", {})
+    tp = sentiment.get("trustpilot", {})
+    digital = research.get("digital_marketing", {})
+    social = digital.get("social_media", {})
+    ig = social.get("instagram", {})
+
+    if not latest_rev or not latest_rev.get("amount"):
+        gap_queries.append(("revenue", f"What is {brand_name} ({domain}) most recent annual revenue? Search for their latest financial results, annual report, or Companies House filing. What was their revenue for fiscal year 2024 or 2025? Give me the exact figure in their native currency."))
+
+    if not tp or not tp.get("rating"):
+        gap_queries.append(("trustpilot", f"What is the current Trustpilot rating for {brand_name}? Go to trustpilot.com/review/{domain} and tell me the current star rating (out of 5) and the total number of reviews."))
+
+    if not ig or not ig.get("followers"):
+        gap_queries.append(("instagram", f"How many Instagram followers does {brand_name} (@gymshark or @{brand_name.lower()}) have right now? Check social media analytics sites like HypeAuditor, SocialBlade, or similar. What is the current follower count?"))
+
+    if gap_queries:
+        log(f"  Found {len(gap_queries)} gaps: {[q[0] for q in gap_queries]}. Running targeted searches...")
+        gap_findings = {}
+        gap_citations = []
+
+        def do_gap_call(name, prompt):
+            log(f"    Gap search: {name}...")
+            content, cites = _perplexity_call(pplx_system, prompt, 2000)
+            log(f"    {name}: {len(content)} chars, {len(cites)} citations")
+            return name, content, cites
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(do_gap_call, name, prompt) for name, prompt in gap_queries]
+            for future in as_completed(futures):
+                try:
+                    name, content, cites = future.result()
+                    gap_findings[name] = content
+                    gap_citations.extend(cites)
+                except Exception as e:
+                    log(f"    Gap search error: {e}")
+
+        # Add gap citations to the main list
+        for c in gap_citations:
+            if c not in seen:
+                seen.add(c)
+                unique_citations.append(c)
+
+        # Use GPT to merge gap findings into the existing research
+        if gap_findings:
+            log("  Merging gap findings...")
+            gap_text = "\n\n".join(f"=== {name.upper()} ===\n{text}" for name, text in gap_findings.items())
+            gap_cites = "\n".join(f"[{i+1}] {url}" for i, url in enumerate(unique_citations))
+
+            merge_system = """You are a data extraction specialist. You have additional research findings to fill in missing data.
+Return ONLY valid JSON with the specific fields that need updating. No markdown, no code fences.
+For source_url: ONLY use URLs from the citations list. Never fabricate URLs."""
+
+            merge_prompt = f"""I have additional research findings to fill gaps in my data about {brand_name}.
+
+ADDITIONAL FINDINGS:
+{gap_text}
+
+AVAILABLE CITATIONS:
+{gap_cites}
+
+Extract ONLY the data that fills these gaps. Return JSON like:
+{{
+  "latest_revenue": {{"year": 2025, "amount": "£XXM", "source_url": "url_or_null"}},
+  "revenue_history_additions": [{{"year": 2025, "revenue": "£XXM", "growth_yoy": "X%", "source_url": "url_or_null"}}],
+  "ebitda": {{"amount": "£XXM", "margin": "XX.X%", "source_url": "url_or_null"}},
+  "gross_margin": {{"value": "XX.X%", "source_url": "url_or_null"}},
+  "trustpilot": {{"rating": X.X, "reviews": XXXXX, "source_url": "url_or_null"}},
+  "instagram": {{"followers": "X.XM", "engagement_rate": "X.X%", "handle": "@handle"}}
+}}
+
+Only include fields where you found actual data. Omit fields still unknown."""
+
+            merge_response = _gpt_call(merge_system, merge_prompt, 2000)
+            gap_data = _parse_json(merge_response)
+
+            if gap_data:
+                log(f"  Gap data found: {list(gap_data.keys())}")
+                # Merge into research
+                if gap_data.get("latest_revenue") and gap_data["latest_revenue"].get("amount"):
+                    research.setdefault("financials", {})["latest_revenue"] = gap_data["latest_revenue"]
+                    log(f"    Updated revenue: {gap_data['latest_revenue']}")
+                if gap_data.get("revenue_history_additions"):
+                    existing = research.get("financials", {}).get("revenue_history", [])
+                    existing_years = {r.get("year") for r in existing}
+                    for entry in gap_data["revenue_history_additions"]:
+                        if entry.get("year") not in existing_years:
+                            existing.append(entry)
+                    research.setdefault("financials", {})["revenue_history"] = existing
+                if gap_data.get("ebitda") and gap_data["ebitda"].get("amount"):
+                    research.setdefault("financials", {})["ebitda"] = gap_data["ebitda"]
+                if gap_data.get("gross_margin") and gap_data["gross_margin"].get("value"):
+                    research.setdefault("financials", {})["gross_margin"] = gap_data["gross_margin"]
+                if gap_data.get("trustpilot") and gap_data["trustpilot"].get("rating"):
+                    research.setdefault("customer_sentiment", {})["trustpilot"] = gap_data["trustpilot"]
+                    log(f"    Updated Trustpilot: {gap_data['trustpilot']}")
+                if gap_data.get("instagram") and gap_data["instagram"].get("followers"):
+                    research.setdefault("digital_marketing", {}).setdefault("social_media", {})["instagram"] = gap_data["instagram"]
+                    log(f"    Updated Instagram: {gap_data['instagram']}")
+            else:
+                log("  Could not parse gap merge response")
+    else:
+        log("  No critical gaps found.")
+
     # Attach citations and raw findings for transparency
     research["_citations"] = unique_citations
     research["_raw_findings"] = raw_findings
