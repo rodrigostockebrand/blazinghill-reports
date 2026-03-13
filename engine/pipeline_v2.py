@@ -368,8 +368,8 @@ CRITICAL REQUIREMENTS:
 
 
 def run_report_generation(brand_name, domain, market, research_data, output_dir):
-    """Phase 2: Generate full HTML report body via GPT-4o."""
-    log("Phase 2: Generating full report via GPT-4o...")
+    """Phase 2: Generate full HTML report body via GPT-5.4."""
+    log("Phase 2: Generating full report via GPT-5.4...")
 
     prompt = _build_report_prompt(brand_name, domain, market, research_data)
 
@@ -382,8 +382,8 @@ def run_report_generation(brand_name, domain, market, research_data, output_dir)
             {"role": "system", "content": REPORT_SYSTEM},
             {"role": "user", "content": prompt},
         ],
-        "max_completion_tokens": 100000,
-        "reasoning_effort": "low",  # Report writing is a generation task, not a reasoning task
+        "max_completion_tokens": 32000,
+        "reasoning_effort": "low",
     }
 
     resp = requests.post(
@@ -460,7 +460,7 @@ Return ONLY HTML — no markdown wrappers."""
                 {"role": "system", "content": REPORT_SYSTEM},
                 {"role": "user", "content": continuation_prompt},
             ],
-            "max_completion_tokens": 100000,
+            "max_completion_tokens": 32000,
             "reasoning_effort": "low",
         },
         timeout=600,
