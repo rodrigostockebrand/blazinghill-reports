@@ -12,6 +12,7 @@ const fs = require('fs');
 const ENV_VARS = {
     PERPLEXITY_API_KEY: process.env.PERPLEXITY_API_KEY || '',
     OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+    CASHMERE_API_KEY: process.env.CASHMERE_API_KEY || '',
     DATAFORSEO_LOGIN: process.env.DATAFORSEO_LOGIN || '',
     DATAFORSEO_PASSWORD: process.env.DATAFORSEO_PASSWORD || '',
     AHREFS_API_KEY: process.env.AHREFS_API_KEY || '',
@@ -31,12 +32,10 @@ const ENV_VARS = {
 function runReport({ reportId, brandName, domain, market, analysisLens }, db) {
     return new Promise((resolve, reject) => {
         const projectRoot = path.join(__dirname, '..');
-        // Use persistent volume for reports so they survive deploys
         const volumeMount = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
         const reportsBase = volumeMount ? path.join(volumeMount, 'reports') : path.join(projectRoot, 'reports');
         const outputDir = path.join(reportsBase, reportId);
 
-        // Ensure reports directory exists
         fs.mkdirSync(reportsBase, { recursive: true });
         fs.mkdirSync(outputDir, { recursive: true });
         fs.mkdirSync(path.join(outputDir, 'assets'), { recursive: true });
@@ -44,16 +43,13 @@ function runReport({ reportId, brandName, domain, market, analysisLens }, db) {
         console.log(`[engine] Starting report generation for ${brandName} (${domain})`);
         console.log(`[engine] Output dir: ${outputDir}`);
 
-        // Update status to 'collecting'
         try {
             db.prepare(`UPDATE reports SET status = 'collecting' WHERE id = ?`).run(reportId);
         } catch (e) {
             console.error('[engine] DB update error:', e);
         }
 
-        const pythonScript = path.join(projectRoot, 'engine', 'pipeline_v2.py');
-
-        // Check if Python and dependencies are available
+        const pythonScript = path.join(projectRoot, 'engine', 'pipeline_v3.py');
         const python = process.env.PYTHON_PATH || 'python3';
 
         const args = [
@@ -82,14 +78,11 @@ function runReport({ reportId, brandName, domain, market, analysisLens }, db) {
             stdout += text;
             console.log(`[engine:stdout] ${text.trim()}`);
 
-            // Update status based on pipeline phase
-            if (text.includes('Phase 1:')) {
+            if (text.includes('Phase 1')) {
                 try { db.prepare(`UPDATE reports SET status = 'collecting' WHERE id = ?`).run(reportId); } catch (e) {}
-            } else if (text.includes('Phase 2:')) {
+            } else if (text.includes('Phase 2')) {
                 try { db.prepare(`UPDATE reports SET status = 'analyzing' WHERE id = ?`).run(reportId); } catch (e) {}
-            } else if (text.includes('Phase 3:')) {
-                try { db.prepare(`UPDATE reports SET status = 'charting' WHERE id = ?`).run(reportId); } catch (e) {}
-            } else if (text.includes('Phase 4:')) {
+            } else if (text.includes('Phase 3')) {
                 try { db.prepare(`UPDATE reports SET status = 'assembling' WHERE id = ?`).run(reportId); } catch (e) {}
             }
         });
@@ -127,7 +120,6 @@ function runReport({ reportId, brandName, domain, market, analysisLens }, db) {
                     reject(new Error(error));
                 }
             } else {
-                // Find the last traceback/exception line
                 const lines = stderr.split('\n');
                 let errorSummary = '';
                 for (let i = lines.length - 1; i >= 0; i--) {
@@ -153,7 +145,6 @@ function runReport({ reportId, brandName, domain, market, analysisLens }, db) {
             reject(err);
         });
 
-        // Set a timeout (25 minutes max for report generation — GPT-5.4 needs more time for 100K token output)
         const timeout = setTimeout(() => {
             console.error('[engine] Pipeline timed out after 25 minutes');
             child.kill('SIGKILL');
