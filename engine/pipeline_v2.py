@@ -152,20 +152,8 @@ CRITICAL REQUIREMENTS:
 9. SEARCH THOROUGHLY. If your first search didn't find revenue, try searching for "[brand] annual revenue 2025", "[brand] financial results", "[brand] annual report". Search multiple ways before giving up."""
 
 
-def run_research(brand_name, domain, market):
-    """Phase 1: Run comprehensive research via Perplexity sonar-pro."""
-    from datetime import datetime
-    log("Phase 1: Researching via Perplexity (sonar-pro with web search)...")
-
-    today = datetime.now().strftime("%B %d, %Y")
-    prompt = RESEARCH_PROMPT.format(
-        brand_name=brand_name, domain=domain, market=market
-    )
-    system = RESEARCH_SYSTEM.format(today=today)
-
-    if not PERPLEXITY_API_KEY:
-        raise RuntimeError("PERPLEXITY_API_KEY not set")
-
+def _perplexity_call(system_msg, user_msg, max_tokens=4000):
+    """Make a single Perplexity API call and return (content, citations)."""
     resp = requests.post(
         "https://api.perplexity.ai/chat/completions",
         headers={
@@ -175,10 +163,10 @@ def run_research(brand_name, domain, market):
         json={
             "model": "sonar-pro",
             "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
             ],
-            "max_tokens": 8000,
+            "max_tokens": max_tokens,
             "temperature": 0.1,
             "return_citations": True,
         },
@@ -188,26 +176,199 @@ def run_research(brand_name, domain, market):
     data = resp.json()
     content = data["choices"][0]["message"]["content"]
     citations = data.get("citations", [])
-    log(f"Research response: {len(content)} chars, {len(citations)} citations")
+    return content, citations
 
-    # Parse JSON from response
-    research = _parse_json(content)
-    if not research:
-        log(f"PARSE ERROR: Could not parse research JSON. First 300 chars: {content[:300]}")
-        # Try harder — sometimes the response has explanation text before the JSON
-        import re
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        if json_match:
+
+def run_research(brand_name, domain, market):
+    """Phase 1: Run comprehensive research via 3 parallel focused Perplexity calls."""
+    from datetime import datetime
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import re as _re
+
+    log("Phase 1: Researching via Perplexity (3 parallel focused calls)...")
+    today = datetime.now().strftime("%B %d, %Y")
+
+    if not PERPLEXITY_API_KEY:
+        raise RuntimeError("PERPLEXITY_API_KEY not set")
+
+    system = RESEARCH_SYSTEM.format(today=today)
+
+    # --- Call 1: Company + Financials (the core DD facts) ---
+    prompt_core = f"""Research {brand_name} ({domain}). Today's date is {today}.
+
+Find and return ONLY valid JSON with these fields:
+{{
+  "company": {{
+    "legal_name": "...",
+    "brand_name": "{brand_name}",
+    "domain": "{domain}",
+    "founded_year": "year",
+    "founded_city": "city where originally founded/started",
+    "current_headquarters": "city where main office is today",
+    "founders": [{{"name": "...", "title": "...", "background": "..."}}],
+    "employee_count": number_or_null,
+    "business_model": "DTC / B2B / Marketplace / etc",
+    "product_categories": ["cat1", "cat2"],
+    "price_range": "$X-$Y",
+    "key_markets": ["market1"],
+    "unique_selling_points": ["usp1"],
+    "brand_positioning": "description",
+    "source_urls": ["url1", "url2"]
+  }},
+  "financials": {{
+    "revenue_history": [{{"year": 2025, "revenue": "amount with currency", "growth_yoy": "X%", "source_url": "url_or_null"}}],
+    "latest_revenue": {{"year": 2025, "amount": "amount with currency", "source_url": "url_or_null"}},
+    "gross_margin": {{"value": "X%", "basis": "reported/estimated", "source_url": "url_or_null"}},
+    "ebitda": {{"amount": "$XM", "margin": "X%", "source_url": "url_or_null"}},
+    "funding_rounds": [{{"round": "Series A", "amount": "$XM", "date": "YYYY", "investors": ["name"], "source_url": "url_or_null"}}],
+    "aov_estimate": "$X",
+    "repeat_purchase_rate": "X%",
+    "revenue_channels": {{"dtc_pct": "X%", "wholesale_pct": "X%", "marketplace_pct": "X%"}},
+    "geographic_revenue": [{{"region": "name", "pct": "X%"}}],
+    "source_urls": ["url1"]
+  }},
+  "operations": {{
+    "manufacturing": "own factory / contract / mixed",
+    "manufacturing_locations": ["country1"],
+    "logistics": "3PL / in-house",
+    "fulfillment_centers": ["location1"],
+    "supply_chain_risks": ["risk1"],
+    "regulatory": {{"gdpr_applicable": true, "product_safety": ["reg1"], "key_risks": ["risk1"]}},
+    "source_urls": ["url1"]
+  }}
+}}
+
+CRITICAL: Find the MOST RECENT revenue figure. Search for "{brand_name} revenue 2025" and "{brand_name} financial results 2025" and "{brand_name} annual report". Use the company's native currency (e.g., \u00a3 for UK companies). Include at least 3 years of revenue history.
+Founding city and HQ city may differ — verify both separately."""
+
+    # --- Call 2: Digital, Social, Reviews (live metrics) ---
+    prompt_digital = f"""Research the digital presence and customer sentiment of {brand_name} ({domain}). Today's date is {today}.
+
+Find CURRENT live data — not figures from old articles. Check platform analytics sites.
+
+Return ONLY valid JSON:
+{{
+  "digital_marketing": {{
+    "monthly_traffic": "XM visits",
+    "traffic_trend": "growing/stable/declining",
+    "top_channels": [{{"channel": "Organic Search", "pct": "X%"}}],
+    "top_countries": [{{"country": "US", "pct": "X%"}}],
+    "mobile_pct": "X%",
+    "domain_authority": number_or_null,
+    "backlinks": "XK",
+    "top_keywords": [{{"keyword": "term", "position": number, "volume": "XK/mo"}}],
+    "social_media": {{
+      "instagram": {{"followers": "XM or XK", "engagement_rate": "X.X%", "handle": "@handle"}},
+      "tiktok": {{"followers": "XM or XK", "handle": "@handle"}},
+      "facebook": {{"followers": "XK"}},
+      "youtube": {{"subscribers": "XK"}},
+      "twitter": {{"followers": "XK"}}
+    }},
+    "tech_stack": ["platform1", "platform2"],
+    "source_urls": ["url1"]
+  }},
+  "customer_sentiment": {{
+    "trustpilot": {{"rating": number, "reviews": number, "source_url": "url_or_null"}},
+    "google_reviews": {{"rating": null, "reviews": null}},
+    "praise_themes": [{{"theme": "description", "frequency": "very common", "quote": "actual customer quote"}}],
+    "complaint_themes": [{{"theme": "description", "frequency": "common", "quote": "actual customer quote"}}],
+    "nps_estimate": number_or_null,
+    "source_urls": ["url1"]
+  }}
+}}
+
+CRITICAL: For Instagram, search "{brand_name} Instagram followers 2026" or check social analytics sites.
+For Trustpilot, search "Trustpilot {brand_name}" to find the CURRENT rating — NOT what an old article says.
+Report the CURRENT numbers as of today, not historical figures from years ago."""
+
+    # --- Call 3: Competitors + Market (industry context) ---
+    prompt_market = f"""Research the competitive landscape and market context for {brand_name} ({domain}) in the {market} market. Today's date is {today}.
+
+Return ONLY valid JSON:
+{{
+  "competitors": {{
+    "direct": [
+      {{
+        "name": "Competitor Name",
+        "domain": "domain.com",
+        "revenue_est": "$XM or native currency",
+        "price_range": "$X-$Y",
+        "differentiator": "description",
+        "market_position": "leader/challenger/niche",
+        "social_followers": "XK",
+        "source_url": "url_or_null"
+      }}
+    ],
+    "market_size": {{"tam": "$XB", "sam": "$XB", "som": "$XM", "growth_rate": "X% CAGR", "source_url": "url_or_null"}},
+    "industry_trends": ["trend1", "trend2"],
+    "ma_comparables": [
+      {{"target": "company", "acquirer": "buyer", "year": 2024, "value": "$XM", "ev_revenue": "X.Xx", "source_url": "url_or_null"}}
+    ],
+    "source_urls": ["url1"]
+  }}
+}}
+
+Include at least 5 direct competitors with real revenue estimates and at least 3 recent M&A comparables in the {market} sector."""
+
+    # Run all 3 calls in parallel
+    all_citations = []
+    results = {}
+
+    def do_call(name, prompt, max_tok):
+        log(f"  Research call: {name}...")
+        content, cites = _perplexity_call(system, prompt, max_tok)
+        log(f"  {name}: {len(content)} chars, {len(cites)} citations")
+        return name, content, cites
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [
+            executor.submit(do_call, "core", prompt_core, 4000),
+            executor.submit(do_call, "digital", prompt_digital, 4000),
+            executor.submit(do_call, "market", prompt_market, 4000),
+        ]
+        for future in as_completed(futures):
             try:
-                research = json.loads(json_match.group())
-                log("Recovered JSON from regex match")
-            except:
-                raise RuntimeError(f"Failed to parse research JSON after regex attempt")
-        else:
-            raise RuntimeError(f"No JSON found in research response")
+                name, content, cites = future.result()
+                parsed = _parse_json(content)
+                if not parsed:
+                    json_match = _re.search(r'\{[\s\S]*\}', content)
+                    if json_match:
+                        try:
+                            parsed = json.loads(json_match.group())
+                        except:
+                            log(f"  WARN: Could not parse {name} response")
+                            parsed = {}
+                    else:
+                        log(f"  WARN: No JSON in {name} response")
+                        parsed = {}
+                results[name] = parsed
+                all_citations.extend(cites)
+            except Exception as e:
+                log(f"  ERROR in research call: {e}")
+                results[name] = {}
 
-    research["_citations"] = citations
-    log(f"Research complete. Keys: {list(research.keys())}")
+    # Merge all results into one research object
+    research = {}
+    for name, data in results.items():
+        for key, value in data.items():
+            if key not in research or research[key] is None:
+                research[key] = value
+            elif isinstance(value, dict) and isinstance(research.get(key), dict):
+                # Deep merge: fill in nulls from the new data
+                for k, v in value.items():
+                    if k not in research[key] or research[key][k] is None:
+                        research[key][k] = v
+
+    # Deduplicate citations
+    seen = set()
+    unique_citations = []
+    for c in all_citations:
+        if c not in seen:
+            seen.add(c)
+            unique_citations.append(c)
+
+    research["_citations"] = unique_citations
+    log(f"Research complete. Keys: {list(research.keys())}, {len(unique_citations)} unique citations")
     return research
 
 
