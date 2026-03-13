@@ -380,22 +380,24 @@ CRITICAL REQUIREMENTS:
 
 
 def run_report_generation(brand_name, domain, market, research_data, output_dir):
-    """Phase 2: Generate full HTML report body via GPT-5.4."""
-    log("Phase 2: Generating full report via GPT-5.4...")
+    """Phase 2: Generate full HTML report body via GPT-4.1."""
+    log("Phase 2: Generating full report via GPT-4.1...")
 
     prompt = _build_report_prompt(brand_name, domain, market, research_data)
 
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY not set")
 
+    # GPT-4.1 is the smartest non-reasoning model (April 2025)
+    # 1M context, 32K output, excellent instruction following, no reasoning token overhead
     request_body = {
-        "model": "gpt-5.4",
+        "model": "gpt-4.1",
         "messages": [
             {"role": "system", "content": REPORT_SYSTEM},
             {"role": "user", "content": prompt},
         ],
-        "max_completion_tokens": 32000,
-        "reasoning_effort": "low",
+        "max_tokens": 32000,
+        "temperature": 0.15,
     }
 
     resp = requests.post(
@@ -467,13 +469,13 @@ Return ONLY HTML — no markdown wrappers."""
             "Content-Type": "application/json",
         },
         json={
-            "model": "gpt-5.4",
+            "model": "gpt-4.1",
             "messages": [
                 {"role": "system", "content": REPORT_SYSTEM},
                 {"role": "user", "content": continuation_prompt},
             ],
-            "max_completion_tokens": 32000,
-            "reasoning_effort": "low",
+            "max_tokens": 32000,
+            "temperature": 0.15,
         },
         timeout=600,
     )
