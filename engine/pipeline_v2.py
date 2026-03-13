@@ -376,24 +376,28 @@ def run_report_generation(brand_name, domain, market, research_data, output_dir)
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY not set")
 
+    request_body = {
+        "model": "gpt-5.4",
+        "messages": [
+            {"role": "system", "content": REPORT_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        "max_completion_tokens": 100000,
+        "reasoning_effort": "low",  # Report writing is a generation task, not a reasoning task
+    }
+
     resp = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json",
         },
-        json={
-            "model": "gpt-5.4",
-            "messages": [
-                {"role": "system", "content": REPORT_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            "max_tokens": 100000,
-            "temperature": 0.2,
-        },
+        json=request_body,
         timeout=600,
     )
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        log(f"OpenAI API error {resp.status_code}: {resp.text[:500]}")
+        resp.raise_for_status()
     data = resp.json()
     report_body = data["choices"][0]["message"]["content"]
 
@@ -456,8 +460,8 @@ Return ONLY HTML — no markdown wrappers."""
                 {"role": "system", "content": REPORT_SYSTEM},
                 {"role": "user", "content": continuation_prompt},
             ],
-            "max_tokens": 100000,
-            "temperature": 0.2,
+            "max_completion_tokens": 100000,
+            "reasoning_effort": "low",
         },
         timeout=600,
     )
