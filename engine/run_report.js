@@ -127,7 +127,17 @@ function runReport({ reportId, brandName, domain, market, analysisLens }, db) {
                     reject(new Error(error));
                 }
             } else {
-                const error = `Pipeline failed with code ${code}: ${stderr.slice(-500)}`;
+                // Find the last traceback/exception line
+                const lines = stderr.split('\n');
+                let errorSummary = '';
+                for (let i = lines.length - 1; i >= 0; i--) {
+                    if (lines[i].includes('Error') || lines[i].includes('Exception') || lines[i].includes('Traceback')) {
+                        errorSummary = lines.slice(Math.max(0, i - 2)).join('\n').slice(0, 800);
+                        break;
+                    }
+                }
+                if (!errorSummary) errorSummary = stderr.slice(-500);
+                const error = `Pipeline failed with code ${code}: ${errorSummary}`;
                 try {
                     db.prepare(`UPDATE reports SET status = 'failed', notes = ? WHERE id = ?`).run(error.slice(0, 1000), reportId);
                 } catch (e) {}

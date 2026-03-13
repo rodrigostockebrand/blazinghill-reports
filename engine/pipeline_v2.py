@@ -168,14 +168,26 @@ def run_research(brand_name, domain, market):
     data = resp.json()
     content = data["choices"][0]["message"]["content"]
     citations = data.get("citations", [])
+    log(f"Research response: {len(content)} chars, {len(citations)} citations")
 
     # Parse JSON from response
     research = _parse_json(content)
     if not research:
-        raise RuntimeError(f"Failed to parse research JSON: {content[:500]}")
+        log(f"PARSE ERROR: Could not parse research JSON. First 300 chars: {content[:300]}")
+        # Try harder — sometimes the response has explanation text before the JSON
+        import re
+        json_match = re.search(r'\{[\s\S]*\}', content)
+        if json_match:
+            try:
+                research = json.loads(json_match.group())
+                log("Recovered JSON from regex match")
+            except:
+                raise RuntimeError(f"Failed to parse research JSON after regex attempt")
+        else:
+            raise RuntimeError(f"No JSON found in research response")
 
     research["_citations"] = citations
-    log(f"Research complete. {len(citations)} citations collected.")
+    log(f"Research complete. Keys: {list(research.keys())}")
     return research
 
 
