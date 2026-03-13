@@ -233,22 +233,34 @@
   }
 
   /* ─── Pricing → Stripe Payment Links ─── */
+  // Stripe Payment Links — direct checkout without requiring login
+  const STRIPE_LINKS = {
+    Starter: 'https://buy.stripe.com/4gM00l1GHaXK3oreky53O00',
+    Professional: 'https://buy.stripe.com/aFadRbadd8PCbUXfoC53O01',
+    Lifetime: 'https://buy.stripe.com/8x25kFgBB4zm4svb8m53O02'
+  };
+
   async function goToCheckout(planName) {
-    if (!state.token) {
-      // User not logged in — prompt them to create an account first
-      state.selectedPlan = planName;
-      openAuth('signup');
+    const baseLink = STRIPE_LINKS[planName];
+    if (!baseLink) {
+      alert('Invalid plan. Please try again.');
       return;
     }
 
-    try {
-      const data = await apiGet(`/api/credits/checkout-link/${planName}`);
-      // Redirect to Stripe Payment Link
-      window.open(data.url, '_blank');
-    } catch (e) {
-      alert('Unable to start checkout. Please try again.');
-      console.error(e);
+    // If user is logged in, append client_reference_id for automatic credit provisioning
+    if (state.token) {
+      try {
+        const data = await apiGet(`/api/credits/checkout-link/${planName}`);
+        window.open(data.url, '_blank');
+        return;
+      } catch (e) {
+        // Fall through to direct link if API fails
+        console.warn('Checkout API failed, using direct Stripe link:', e);
+      }
     }
+
+    // Not logged in or API failed — go directly to Stripe checkout
+    window.open(baseLink, '_blank');
   }
 
   function promptUpgrade() {
