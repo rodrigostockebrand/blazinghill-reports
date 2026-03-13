@@ -213,7 +213,7 @@ Extract into this JSON structure:
     "brand_name": "{brand_name}",
     "domain": "{domain}",
     "founded_year": "year",
-    "founded_city": "city where originally founded/started",
+    "founded_city": "the main city associated with founding (e.g., if someone started in a suburb/town near a major city, use the major city name that is commonly cited)",
     "current_headquarters": "city where HQ is today (may differ from founding city)",
     "founders": [{{"name": "...", "title": "...", "background": "..."}}],
     "employee_count": number_or_null,
@@ -329,13 +329,13 @@ For revenue, use the native currency mentioned (£ for UK companies) and include
     ig = social.get("instagram", {})
 
     if not latest_rev or not latest_rev.get("amount"):
-        gap_queries.append(("revenue", f"What is {brand_name} ({domain}) most recent annual revenue? Search for their latest financial results, annual report, or Companies House filing. What was their revenue for fiscal year 2024 or 2025? Give me the exact figure in their native currency."))
+        gap_queries.append(("revenue", f"What is {brand_name} most recent official annual revenue? Search for '{brand_name} revenue 2025 financial results', '{brand_name} FY25 sales', '{brand_name} annual report'. I need the officially reported revenue figure from their latest fiscal year (not ecommerce estimates from analytics sites). What was their total annual revenue for fiscal year ending in 2024 or 2025? Give me the exact figure in their native currency (£ for UK companies)."))
 
     if not tp or not tp.get("rating"):
-        gap_queries.append(("trustpilot", f"What is the current Trustpilot rating for {brand_name}? Go to trustpilot.com/review/{domain} and tell me the current star rating (out of 5) and the total number of reviews."))
+        gap_queries.append(("trustpilot", f"What is the current Trustpilot rating for {brand_name}? Search for '{brand_name} Trustpilot rating', '{brand_name} Trustpilot reviews', 'trustpilot.com {domain}'. What star rating (out of 5) does {brand_name} have on Trustpilot? How many total reviews? Is the rating good, average, or poor? Give me the specific number."))
 
     if not ig or not ig.get("followers"):
-        gap_queries.append(("instagram", f"How many Instagram followers does {brand_name} (@gymshark or @{brand_name.lower()}) have right now? Check social media analytics sites like HypeAuditor, SocialBlade, or similar. What is the current follower count?"))
+        gap_queries.append(("instagram", f"How many Instagram followers does {brand_name} have? Search for '{brand_name} Instagram followers', 'HypeAuditor {brand_name} Instagram', 'SocialBlade {brand_name}'. What is the current follower count for @{brand_name.lower()} on Instagram?"))
 
     if gap_queries:
         log(f"  Found {len(gap_queries)} gaps: {[q[0] for q in gap_queries]}. Running targeted searches...")
@@ -427,6 +427,8 @@ Only include fields where you found actual data. Omit fields still unknown."""
 
     # Attach citations and raw findings for transparency
     research["_citations"] = unique_citations
+    if gap_queries:
+        raw_findings["_gap_findings"] = gap_findings if 'gap_findings' in locals() else {}
     research["_raw_findings"] = raw_findings
 
     log(f"Research complete. Keys: {[k for k in research.keys() if not k.startswith('_')]}, {len(unique_citations)} citations")
