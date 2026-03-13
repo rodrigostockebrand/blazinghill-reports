@@ -31,14 +31,15 @@ You must return ONLY valid JSON. No markdown, no code fences, no explanations.
 
 CRITICAL DATA ACCURACY RULES:
 1. Every data point must include its source URL where a human analyst can verify it.
-2. If a data point cannot be verified with a real URL, use null — NEVER guess or estimate.
-3. Be precise with numbers. Include currency symbols. Prefer exact figures over ranges.
-4. TODAY'S DATE is {today}. You MUST find the MOST RECENT data available.
-   - Revenue: find the latest fiscal year reported (2024 or 2025 filings preferred). Revenue from 2022 or earlier is UNACCEPTABLE unless no newer data exists.
-   - Social media followers: report the CURRENT count as of today, not historical figures from articles.
-   - Review ratings (Trustpilot, Google): report the CURRENT live rating, not what an old article mentioned.
-5. Distinguish between FOUNDING CITY and CURRENT HEADQUARTERS. A company can be founded in one city and have HQ in another.
-6. Every source_url MUST be a real, publicly accessible URL that currently returns a 200 status — NEVER fabricate URLs."""
+2. Be precise with numbers. Include currency symbols. Prefer exact figures over ranges.
+3. TODAY'S DATE is {today}. You MUST find the MOST RECENT data available.
+   - Revenue: find the latest fiscal year reported. Prioritize 2024/2025 data. Search for recent press releases, annual report announcements, and financial news.
+   - Social media followers: search for the CURRENT count. Look at platform analytics sites (e.g., SocialBlade, HypeAuditor) or recent news articles mentioning follower counts.
+   - Review ratings (Trustpilot, Google): search for the CURRENT live rating. Check recent reviews and current score.
+4. Distinguish between FOUNDING CITY (where the company originally started) and CURRENT HEADQUARTERS (where the main office is today). These are often different.
+5. For source URLs: ONLY include URLs you found in your search results. NEVER fabricate or guess URLs. If you have data but no specific URL, set source_url to null but STILL include the data point with the number.
+6. If you cannot find a specific data point at all, use null for the value. But TRY HARD to find it — search multiple queries.
+7. When you have data from an older year (e.g., 2023 revenue) but cannot find a newer figure, include it with the correct year — do NOT omit it entirely. An older data point is better than no data point."""
 
 RESEARCH_PROMPT = """Conduct exhaustive commercial due diligence research on {brand_name} ({domain}) in the {market} market.
 
@@ -146,8 +147,9 @@ CRITICAL REQUIREMENTS:
 4. Trustpilot/review ratings: Report the CURRENT live rating — not what an article from years ago stated.
 5. Founding: Clearly distinguish where the company was FOUNDED vs. where its headquarters are TODAY.
 6. Include at least 5 direct competitors with revenue estimates and at least 3 M&A comparables.
-7. Every source_url must be a real, currently accessible URL. NEVER fabricate or guess URLs. If you don't have a source URL for a data point, set source_url to null.
-8. Use the company's native currency for revenue (e.g., £ for UK companies, € for EU companies) and also provide USD equivalent."""
+7. Every source_url must be a real URL from your search results. NEVER fabricate or guess URLs. If you found a data point but don't have a direct URL, set source_url to null but STILL include the data value.
+8. Use the company's native currency for revenue (e.g., £ for UK companies, € for EU companies) and also provide USD equivalent.
+9. SEARCH THOROUGHLY. If your first search didn't find revenue, try searching for "[brand] annual revenue 2025", "[brand] financial results", "[brand] annual report". Search multiple ways before giving up."""
 
 
 def run_research(brand_name, domain, market):
