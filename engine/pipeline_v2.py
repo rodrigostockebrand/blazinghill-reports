@@ -379,129 +379,257 @@ CRITICAL REQUIREMENTS:
 """
 
 
-def run_report_generation(brand_name, domain, market, research_data, output_dir):
-    """Phase 2: Generate full HTML report body via GPT-4.1."""
-    log("Phase 2: Generating full report via GPT-4.1...")
+# Section definitions for batch splitting
+SECTION_DEFS = [
+    (1, "Executive Summary", "KPI cards (6-8), investment thesis box, key risks & opportunities table"),
+    (2, "Company Profile", "Corporate fundamentals stat-rows, product portfolio list, revenue timeline table, transaction summary table"),
+    (3, "PE Economics", "EBITDA analysis table, unit economics stat-rows (AOV, CAC, LTV, LTV/CAC, payback, gross margin), M&A comparables table, return scenarios (bear/base/bull) table, Chart: EBITDA waterfall"),
+    (4, "Digital Marketing Performance", "Traffic overview stat-rows, channel mix table, geo distribution table, marketing funnel metrics, Chart: Traffic channel bar chart"),
+    (5, "Competitive Intelligence", "Competitor comparison table (5+ competitors with revenue, traffic, positioning), Chart: Radar chart comparing brand vs top 2-3 competitors on 6 dimensions"),
+    (6, "AI & Innovation Assessment", "Overall score stat-row, capability assessment table, AI transfer plan phases, Chart: AI readiness heatmap"),
+    (7, "Risk Assessment", "Risk matrix table (risk, likelihood, impact, severity, mitigation), channel dependency analysis, Chart: Risk severity horizontal bars"),
+    (8, "Channel Economics", "ROAS by channel table, Meta CPM trend table, Chart: Channel ROI bar chart"),
+    (9, "Cohort Analysis", "DTC retention benchmark table, LTV build components, Chart: Retention decay curve (line)"),
+    (10, "TAM / SAM / SOM", "Market sizing stat-rows with sources, growth dynamics, Chart: TAM/SAM/SOM nested visualization"),
+    (11, "Customer Sentiment", "Aggregate ratings table, praise themes table with quotes, complaint themes with quotes, Chart: Sentiment distribution (stacked bar)"),
+    (12, "Content Strategy Gap", "SEO opportunity analysis, high-value keyword table, content roadmap phases"),
+    (13, "Value Creation Roadmap", "Value lever table (lever, year 1 impact, year 3 impact, confidence), DTC acquisition case studies table"),
+    (14, "Pricing Strategy & Architecture", "Pricing tier table, competitive pricing map table, pricing maturity score, Chart: Pricing architecture comparison (horizontal bar)"),
+    (15, "Revenue Quality & Concentration", "Revenue growth table, channel mix, geographic concentration, Chart: Revenue concentration doughnut"),
+    (16, "Management & Organization", "Founding team profiles, company structure, key person risk assessment"),
+    (17, "Technology Stack Assessment", "Core platform table, payment infrastructure, tech gap analysis table"),
+    (18, "Brand Equity Deep Dive", "Review breakdown table, positive/negative themes, brand dimensions, Chart: Brand equity radar"),
+    (19, "Supply Chain & Fulfillment", "Manufacturing model, post-acquisition synergies table"),
+    (20, "Regulatory & Compliance", "GDPR assessment, local regulations table, product safety, regulatory timeline"),
+    (21, "Working Capital & Cash Dynamics", "Cash conversion cycle stat-rows, FCF build analysis, seasonal dynamics"),
+    (22, "Exit Analysis & M&A Comparables", "M&A comps table, exit path analysis, Chart: M&A scatter (EV/Revenue vs Revenue)"),
+    (23, "Geographic Expansion Roadmap", "Priority markets table, expansion phasing with timeline"),
+    (24, "Marketing-Adjusted LTV Model", "LTV scenario table, impact waterfall breakdown, Chart: LTV waterfall"),
+    (25, "CAC Payback & Efficiency", "CAC by channel table, organic vs paid comparison, Chart: CAC payback bar chart"),
+    (26, "Contribution Margin Bridge", "Margin bridge steps, optimization opportunities, Chart: Contribution margin bridge (waterfall)"),
+    (27, "Marketing P&L & Budget Allocation", "Budget allocation table, full-funnel architecture, Chart: Marketing spend pie chart"),
+    (28, "Customer Segmentation & RFM", "RFM segment table, LTV amplification strategies"),
+    (29, "Repeat Purchase & Retention", "Retention analysis, structural constraints, Chart: Retention curve (line)"),
+    (30, "AOV Dynamics & Uplift Levers", "AOV by geography table, uplift roadmap"),
+    (31, "NPS & Voice of Customer", "VOC theme decomposition table, NPS estimate analysis"),
+    (32, "Customer Journey & Funnel", "Full-funnel stage analysis table, Chart: Conversion funnel (horizontal bars)"),
+    (33, "SEO Authority & Organic Position", "Domain authority comparison, keyword gap analysis table, Chart: SEO comparison (bar)"),
+    (34, "Paid Media Performance", "Paid media efficiency metrics, ROAS benchmarks"),
+    (35, "Email & CRM Maturity", "CRM maturity audit table, email revenue upside analysis"),
+    (36, "CRO Analysis", "Conversion audit findings, mobile-first priorities"),
+    (37, "Social Commerce & Influencer ROI", "UGC program assessment, influencer scale analysis"),
+    (38, "Share of Voice Analysis", "Competitive social footprint table, SOV analysis"),
+    (39, "Price Elasticity & Discounting", "Discount dependency assessment, exit roadmap from promotions"),
+    (40, "Category Disruption Threats", "Threat matrix table with probability and impact"),
+    (41, "Cross-Border E-Commerce", "Localization scorecard table, market entry analysis"),
+    (42, "Brand Trademark & IP Valuation", "IP asset inventory, licensing potential"),
+    (43, "First-Party Data Asset", "Data valuation analysis, GDPR compliance checklist"),
+    (44, "Content & Creative Library", "Content asset inventory, production model, reusability assessment"),
+    (45, "MarTech Stack ROI", "Confirmed tech stack table, optimization recommendations"),
+    (46, "100-Day Post-Close Plan", "Phased action plan table (Day 1-30, 31-60, 61-100), budget reallocation"),
+    (47, "EBITDA Bridge", "Marketing-driven EBITDA levers table, Chart: EBITDA bridge waterfall"),
+    (48, "Scenario Analysis", "Bull/Base/Bear assumptions table, key sensitivity drivers, Chart: Scenario comparison (grouped bar with Revenue, EBITDA, MOIC, IRR for each case)"),
+    (49, "Investment Committee Summary", "Deal scorecard (10 dimensions scored 1-10), red flags list, final investment thesis, conditions precedent, return summary, Chart: Deal scorecard radar"),
+    (50, "Appendix", "Data sources table, methodology notes"),
+]
 
-    prompt = _build_report_prompt(brand_name, domain, market, research_data)
 
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY not set")
-
-    # GPT-4.1 is the smartest non-reasoning model (April 2025)
-    # 1M context, 32K output, excellent instruction following, no reasoning token overhead
-    request_body = {
-        "model": "gpt-4.1",
-        "messages": [
-            {"role": "system", "content": REPORT_SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-        "max_tokens": 32000,
-        "temperature": 0.15,
-    }
-
-    resp = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json=request_body,
-        timeout=600,
+def _build_batch_prompt(brand_name, domain, market, research_json, citations_text, start_section, end_section):
+    """Build a prompt for a specific batch of sections (e.g., 1-17, 18-34, 35-50)."""
+    # Filter section definitions for this batch
+    batch_sections = [s for s in SECTION_DEFS if start_section <= s[0] <= end_section]
+    section_list = "\n".join(
+        f"{num:02d}. {title} — {desc}" for num, title, desc in batch_sections
     )
-    if resp.status_code != 200:
-        log(f"OpenAI API error {resp.status_code}: {resp.text[:500]}")
-        resp.raise_for_status()
-    data = resp.json()
-    report_body = data["choices"][0]["message"]["content"]
 
-    # Strip markdown fences if present
-    report_body = report_body.strip()
-    if report_body.startswith("```"):
-        lines = report_body.split("\n")
-        lines = lines[1:]  # Remove opening ```html
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        report_body = "\n".join(lines)
+    return f"""Using the research data below, generate sections {start_section:02d}-{end_section:02d} of a PE due diligence report for {brand_name} ({domain}) in the {market} market.
 
-    log(f"Report body generated: {len(report_body)} characters")
-
-    # GPT-4o has a 16K token output limit — if the report was truncated,
-    # we need to continue generation
-    finish_reason = data["choices"][0].get("finish_reason", "stop")
-    if finish_reason == "length":
-        log("Report truncated at token limit, generating continuation...")
-        report_body = _continue_generation(report_body, brand_name, domain, market, research_data)
-
-    return report_body
-
-
-def _continue_generation(partial_body, brand_name, domain, market, research_data):
-    """Continue generating the report if it was truncated."""
-    # Find which section we stopped at
-    import re
-    section_ids = re.findall(r'id="s(\d+)"', partial_body)
-    last_section = int(section_ids[-1]) if section_ids else 0
-    next_section = last_section + 1
-
-    if next_section > 50:
-        return partial_body
-
-    log(f"Continuing from section {next_section}...")
-
-    clean_research = {k: v for k, v in research_data.items() if not k.startswith("_")}
-    research_json = json.dumps(clean_research, indent=2, default=str)
-
-    continuation_prompt = f"""Continue generating the PE due diligence report for {brand_name} ({domain}).
-You stopped at section {last_section}. Continue from section {next_section:02d} through section 50.
+This is part of a 50-section report. You are generating ONLY sections {start_section:02d} through {end_section:02d}.
 
 RESEARCH DATA:
 {research_json}
 
-Use the exact same HTML format, component styles, and Chart.js patterns as before.
-Continue generating section blocks starting from section {next_section:02d}.
-Return ONLY HTML — no markdown wrappers."""
+CITATIONS FROM RESEARCH:
+{citations_text}
 
-    resp = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": "gpt-4.1",
-            "messages": [
-                {"role": "system", "content": REPORT_SYSTEM},
-                {"role": "user", "content": continuation_prompt},
-            ],
-            "max_tokens": 32000,
-            "temperature": 0.15,
-        },
-        timeout=600,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    continuation = data["choices"][0]["message"]["content"].strip()
+OUTPUT FORMAT:
+Return a sequence of HTML section blocks. Each section must follow this exact structure:
 
-    if continuation.startswith("```"):
-        lines = continuation.split("\n")
-        lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        continuation = "\n".join(lines)
+<section class="section" id="sXX">
+  <div class="section-label">Section XX</div>
+  <h2>Section Title</h2>
+  <p class="section-intro">Substantive intro paragraph with data points and <a href="SOURCE_URL" target="_blank">source links</a>.</p>
 
-    combined = partial_body + "\n\n" + continuation
-    log(f"Combined report: {len(combined)} characters")
+  <h3 class="subsection">Subsection Title</h3>
+  <!-- Content: tables, stat-rows, charts, paragraphs, lists -->
+</section>
 
-    # Check if we need another continuation
-    section_ids = re.findall(r'id="s(\d+)"', combined)
-    last_section = int(section_ids[-1]) if section_ids else 0
-    finish_reason = data["choices"][0].get("finish_reason", "stop")
+COMPONENT TEMPLATES:
 
-    if finish_reason == "length" and last_section < 50:
-        return _continue_generation(combined, brand_name, domain, market, research_data)
+KPI Cards (use in Executive Summary):
+<div class="kpi-grid">
+  <div class="kpi-card kpi-navy">
+    <div class="kpi-label">METRIC NAME</div>
+    <div class="kpi-value">$28.3M</div>
+    <div class="kpi-sub">+40% YoY growth</div>
+    <div class="kpi-source"><a href="URL" target="_blank">Source Name</a></div>
+  </div>
+</div>
 
-    return combined
+Tables:
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Column 1</th><th>Column 2</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td>Data</td><td>$10M</td><td><a href="URL" target="_blank">source.com</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+Stat Rows:
+<div class="stat-row"><span class="stat-label">Revenue FY2024</span><span class="stat-value">$28.3M</span><span class="stat-note"><a href="URL" target="_blank">Source</a></span></div>
+
+Risk Tags:
+<span class="tag tag-risk">High Risk</span>
+<span class="tag tag-opp">Opportunity</span>
+<span class="tag tag-watch">Watch</span>
+
+Chart.js (wrap in a <div> with a <canvas>):
+<div class="chart-container" style="position:relative;height:350px;margin:24px 0;">
+  <canvas id="chartUniqueId"></canvas>
+</div>
+<script>
+new Chart(document.getElementById('chartUniqueId'), {{
+  type: 'bar',
+  data: {{
+    labels: ['2021', '2022', '2023', '2024'],
+    datasets: [{{
+      label: 'Revenue ($M)',
+      data: [15.2, 18.7, 22.1, 28.3],
+      backgroundColor: ['#e2e8f0', '#e2e8f0', '#e2e8f0', '#2563eb']
+    }}]
+  }},
+  options: {{
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {{ legend: {{ display: false }}, title: {{ display: true, text: 'Revenue Growth Trajectory' }} }}
+  }}
+}});
+</script>
+<p class="tiny text-muted">Sources: <a href="URL" target="_blank">source.com</a></p>
+
+Thesis Box (for Investment Thesis):
+<div class="thesis-box">Investment thesis paragraph here...</div>
+
+Lists:
+<ul class="report-list"><li><strong>Key Point</strong> — Description with data</li></ul>
+
+CHART TYPES TO USE (with real data from research):
+- Bar charts: Revenue history, competitor comparison, pricing tiers, budget allocation
+- Horizontal bar: Market share, channel mix, geographic distribution
+- Line charts: Traffic trends, retention curves, CPM trends
+- Doughnut/Pie: Revenue channel mix, geographic concentration, traffic sources
+- Radar: Competitive positioning (5-7 dimensions), AI readiness, brand equity dimensions
+- Stacked bar: Scenario analysis (bear/base/bull), EBITDA bridge, contribution margin
+- Scatter: M&A comparables (EV/Revenue vs Revenue)
+- Mixed (bar+line): Revenue with growth rate overlay, AOV trends
+
+IMPORTANT CHART RULES:
+- Every chart must use REAL data from the research — never random or placeholder numbers
+- Use real competitor names from the research data — never "Comp 1" or "Competitor A"
+- Every chart canvas ID must be unique (e.g., chart_s{start_section:02d}_revenue, chart_s{start_section:02d}_competitors)
+- Include source attribution below every chart
+- Use these colors: Navy #1a2332, Blue #2563eb, Green #16a34a, Amber #d97706, Red #dc2626, Gray tones for secondary data
+
+GENERATE THESE SECTIONS (in order):
+
+{section_list}
+
+CRITICAL REQUIREMENTS:
+- Use ONLY real data from the research. If a data point is unavailable, estimate from industry benchmarks and mark with "(Est.)"
+- Include Chart.js charts where specified in the section descriptions above
+- Every table must have real, populated rows — never empty tables
+- Source URLs must be real and clickable — use citations from the research
+- Write for senior PE partners — assume financial sophistication
+- Each section must have substantial content (minimum 2-3 paragraphs plus tables/charts)
+- Competitor names must be real companies from the research, never generic labels
+- Return ONLY the HTML — no markdown, no code fences, no explanations"""
+
+
+def run_report_generation(brand_name, domain, market, research_data, output_dir):
+    """Phase 2: Generate full HTML report body via GPT-4.1 in 3 batches."""
+    log("Phase 2: Generating full report via GPT-4.1 (3 batches)...")
+
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY not set")
+
+    clean_research = {k: v for k, v in research_data.items() if not k.startswith("_")}
+    research_json = json.dumps(clean_research, indent=2, default=str)
+    citations = research_data.get("_citations", [])
+    citations_text = "\n".join(f"[{i+1}] {url}" for i, url in enumerate(citations)) if citations else ""
+
+    # Split 50 sections into 3 batches
+    batches = [
+        {"start": 1, "end": 17, "label": "Batch 1/3 (Sections 1-17)"},
+        {"start": 18, "end": 34, "label": "Batch 2/3 (Sections 18-34)"},
+        {"start": 35, "end": 50, "label": "Batch 3/3 (Sections 35-50)"},
+    ]
+
+    all_parts = []
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def generate_batch(batch):
+        prompt = _build_batch_prompt(brand_name, domain, market, research_json, citations_text, batch["start"], batch["end"])
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4.1",
+                "messages": [
+                    {"role": "system", "content": REPORT_SYSTEM},
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 32000,
+                "temperature": 0.15,
+            },
+            timeout=300,
+        )
+        if resp.status_code != 200:
+            log(f"OpenAI API error for {batch['label']}: {resp.status_code}: {resp.text[:300]}")
+            resp.raise_for_status()
+        data = resp.json()
+        body = data["choices"][0]["message"]["content"].strip()
+        # Strip markdown fences
+        if body.startswith("```"):
+            lines = body.split("\n")
+            lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            body = "\n".join(lines)
+        finish = data["choices"][0].get("finish_reason", "stop")
+        log(f"{batch['label']}: {len(body)} chars, finish_reason={finish}")
+        return (batch["start"], body)
+
+    # Run batches in parallel (2 at a time to respect rate limits)
+    results = {}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {executor.submit(generate_batch, b): b for b in batches}
+        for future in as_completed(futures):
+            batch = futures[future]
+            try:
+                start, body = future.result()
+                results[start] = body
+            except Exception as e:
+                log(f"ERROR generating {batch['label']}: {e}")
+                results[batch["start"]] = f'<section class="section" id="s{batch["start"]:02d}"><h2>Section generation failed</h2><p>{str(e)[:200]}</p></section>'
+
+    # Merge in order
+    report_body = "\n\n".join(results[k] for k in sorted(results.keys()))
+    log(f"Full report: {len(report_body)} characters from {len(results)} batches")
+    return report_body
 
 
 # ─── Phase 3: HTML Assembly ───
