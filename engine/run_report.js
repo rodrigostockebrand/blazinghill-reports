@@ -51,7 +51,7 @@ function runReport({ reportId, brandName, domain, market, analysisLens }, db) {
             console.error('[engine] DB update error:', e);
         }
 
-        const pythonScript = path.join(projectRoot, 'engine', 'pipeline.py');
+        const pythonScript = path.join(projectRoot, 'engine', 'pipeline_v2.py');
 
         // Check if Python and dependencies are available
         const python = process.env.PYTHON_PATH || 'python3';
@@ -143,15 +143,15 @@ function runReport({ reportId, brandName, domain, market, analysisLens }, db) {
             reject(err);
         });
 
-        // Set a timeout (15 minutes max for report generation)
+        // Set a timeout (25 minutes max for report generation — GPT-5.4 needs more time for 100K token output)
         const timeout = setTimeout(() => {
-            console.error('[engine] Pipeline timed out after 15 minutes');
+            console.error('[engine] Pipeline timed out after 25 minutes');
             child.kill('SIGKILL');
             try {
                 db.prepare(`UPDATE reports SET status = 'failed', notes = 'Generation timed out' WHERE id = ?`).run(reportId);
             } catch (e) {}
             reject(new Error('Report generation timed out'));
-        }, 15 * 60 * 1000);
+        }, 25 * 60 * 1000);
 
         child.on('close', () => clearTimeout(timeout));
     });
