@@ -28,9 +28,17 @@ def log(msg):
 
 RESEARCH_SYSTEM = """You are a senior private equity analyst conducting commercial due diligence.
 You must return ONLY valid JSON. No markdown, no code fences, no explanations.
-Every data point must include its source URL where a human analyst can verify it.
-If a data point cannot be verified, use null and note it. Be precise with numbers.
-Include currency symbols. Prefer exact figures over ranges when available."""
+
+CRITICAL DATA ACCURACY RULES:
+1. Every data point must include its source URL where a human analyst can verify it.
+2. If a data point cannot be verified with a real URL, use null — NEVER guess or estimate.
+3. Be precise with numbers. Include currency symbols. Prefer exact figures over ranges.
+4. TODAY'S DATE is {today}. You MUST find the MOST RECENT data available.
+   - Revenue: find the latest fiscal year reported (2024 or 2025 filings preferred). Revenue from 2022 or earlier is UNACCEPTABLE unless no newer data exists.
+   - Social media followers: report the CURRENT count as of today, not historical figures from articles.
+   - Review ratings (Trustpilot, Google): report the CURRENT live rating, not what an old article mentioned.
+5. Distinguish between FOUNDING CITY and CURRENT HEADQUARTERS. A company can be founded in one city and have HQ in another.
+6. Every source_url MUST be a real, publicly accessible URL that currently returns a 200 status — NEVER fabricate URLs."""
 
 RESEARCH_PROMPT = """Conduct exhaustive commercial due diligence research on {brand_name} ({domain}) in the {market} market.
 
@@ -43,8 +51,9 @@ Return a single JSON object with these top-level keys:
     "legal_name": "...",
     "brand_name": "{brand_name}",
     "domain": "{domain}",
-    "founded": "year",
-    "headquarters": "city, country",
+    "founded_year": "year",
+    "founded_city": "city where the company was originally founded/started",
+    "current_headquarters": "city where the HQ is located today (may differ from founding city)",
     "founders": [{{"name": "...", "title": "...", "background": "..."}}],
     "employee_count": number_or_null,
     "business_model": "DTC / B2B / Marketplace / etc",
@@ -56,8 +65,8 @@ Return a single JSON object with these top-level keys:
     "source_urls": ["url1", "url2"]
   }},
   "financials": {{
-    "revenue_history": [{{"year": 2024, "revenue": "$XM", "growth_yoy": "X%", "source_url": "url"}}],
-    "latest_revenue": {{"year": 2024, "amount": "$XM", "source_url": "url"}},
+    "revenue_history": [{{"year": 2025, "revenue": "$XM", "growth_yoy": "X%", "source_url": "url"}}],
+    "latest_revenue": {{"year": "MUST be most recent fiscal year available (2024 or 2025 preferred)", "amount": "$XM", "source_url": "url"}},
     "gross_margin": {{"value": "X%", "basis": "reported/estimated", "source_url": "url"}},
     "ebitda": {{"amount": "$XM", "margin": "X%", "source_url": "url_or_null"}},
     "funding_rounds": [{{"round": "Series A", "amount": "$XM", "date": "YYYY", "investors": ["name"], "source_url": "url"}}],
@@ -130,18 +139,27 @@ Return a single JSON object with these top-level keys:
   }}
 }}
 
-CRITICAL: Include at least 5 direct competitors with revenue estimates. Include at least 3 M&A comparables.
-Find at least 3 years of revenue data (estimate with growth rates if needed, mark as "Est.").
-Every source_url must be a real, publicly accessible URL — not a placeholder."""
+CRITICAL REQUIREMENTS:
+1. Revenue: Find the MOST RECENT fiscal year results (2024 or 2025). Revenue from 2022 or earlier is NOT acceptable for "latest_revenue" — search harder.
+2. Include at least 3 years of revenue data. If only older data exists publicly, include it BUT also search for the most recent annual reports, press releases, or news articles for current figures.
+3. Social media: Report CURRENT follower counts as of today — not figures from old articles. Check the actual platform pages.
+4. Trustpilot/review ratings: Report the CURRENT live rating — not what an article from years ago stated.
+5. Founding: Clearly distinguish where the company was FOUNDED vs. where its headquarters are TODAY.
+6. Include at least 5 direct competitors with revenue estimates and at least 3 M&A comparables.
+7. Every source_url must be a real, currently accessible URL. NEVER fabricate or guess URLs. If you don't have a source URL for a data point, set source_url to null.
+8. Use the company's native currency for revenue (e.g., £ for UK companies, € for EU companies) and also provide USD equivalent."""
 
 
 def run_research(brand_name, domain, market):
     """Phase 1: Run comprehensive research via Perplexity sonar-pro."""
+    from datetime import datetime
     log("Phase 1: Researching via Perplexity (sonar-pro with web search)...")
 
+    today = datetime.now().strftime("%B %d, %Y")
     prompt = RESEARCH_PROMPT.format(
         brand_name=brand_name, domain=domain, market=market
     )
+    system = RESEARCH_SYSTEM.format(today=today)
 
     if not PERPLEXITY_API_KEY:
         raise RuntimeError("PERPLEXITY_API_KEY not set")
@@ -155,10 +173,10 @@ def run_research(brand_name, domain, market):
         json={
             "model": "sonar-pro",
             "messages": [
-                {"role": "system", "content": RESEARCH_SYSTEM},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
-            "max_tokens": 4000,
+            "max_tokens": 8000,
             "temperature": 0.1,
             "return_citations": True,
         },
@@ -195,6 +213,7 @@ def run_research(brand_name, domain, market):
 
 REPORT_SYSTEM = """You are a McKinsey-grade PE due diligence report writer.
 You produce investment-quality HTML report content for senior private equity partners.
+This report is being used to make million-dollar investment decisions. Any misinformation could jeopardize the deal.
 
 CRITICAL RULES:
 1. Write substantive analysis — minimum 2-3 paragraphs per section with specific data points
@@ -204,7 +223,18 @@ CRITICAL RULES:
 5. Tables must have real data — never empty rows or "N/A" for everything
 6. If exact data unavailable, provide industry-benchmark estimates labeled "(Est.)"
 7. Competitor names must be REAL companies, never "Comp 1" or "Competitor A"
-8. Return ONLY the HTML content — no markdown, no code fences, no ```html wrappers"""
+8. Return ONLY the HTML content — no markdown, no code fences, no ```html wrappers
+
+SOURCE CITATION RULES (CRITICAL — an analyst WILL click every link):
+9. ONLY use source URLs provided in the CITATIONS and RESEARCH DATA. NEVER invent or fabricate URLs.
+10. If you need to cite something but don't have a URL from the research, write the source name as plain text (not a hyperlink). Example: "(Source: Company annual report)" instead of a made-up link.
+11. NEVER create URLs with future dates or URLs you are not 100% certain exist.
+12. If the research data has a source_url of null, do NOT make up a URL — cite it as plain text or omit the link.
+
+DATA RECENCY RULES (CRITICAL):
+13. Use the MOST RECENT revenue figure from the research. If multiple years are available, highlight the latest one prominently.
+14. Founding city and current HQ city may differ — check the research data for both fields and use them correctly.
+15. Social media followers and review ratings should reflect current figures from the research, not historical ones."""
 
 
 def _build_report_prompt(brand_name, domain, market, research_data):
