@@ -14,6 +14,20 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
+# Explicit exports for 'from pipeline_utils import *'
+__all__ = [
+    # Standard library re-exports
+    'argparse', 'json', 'os', 'sys', 'time', 'traceback', 'requests',
+    'Path', 'ThreadPoolExecutor', 'as_completed', 'datetime',
+    # Constants
+    'PERPLEXITY_API_KEY', 'OPENAI_API_KEY', 'CASHMERE_API_KEY',
+    'PITCHBOOK_COMPANY', 'PITCHBOOK_INVESTOR', 'CBINSIGHTS_RESEARCH',
+    'STATISTA_PREMIUM', 'STATISTA_FREE',
+    # Functions
+    'log', '_cashmere_search', '_extract_premium_data',
+    '_perplexity_call', '_perplexity_call_with_sources', '_gpt_call',
+]
+
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 CASHMERE_API_KEY = os.environ.get("CASHMERE_API_KEY", "")
@@ -154,4 +168,3 @@ def _gpt_call(system_msg, user_msg, max_tokens=4000):
 
 
 # ─── Phase 1: Multi-Source Research ───
-
