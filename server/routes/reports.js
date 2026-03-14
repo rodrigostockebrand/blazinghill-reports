@@ -35,7 +35,7 @@ router.get('/:id', (req, res) => {
 
 // POST /api/reports — Create a new report (consumes 1 credit)
 router.post('/', (req, res) => {
-  const { brandName, domain, market, analysisLens, priority, notes } = req.body;
+  const { brandName, domain, market, analysisLens, priority, notes, enrichmentData } = req.body;
 
   if (!brandName || !domain || !market) {
     return res.status(400).json({ error: 'Brand name, domain, and market are required.' });
@@ -78,6 +78,7 @@ router.post('/', (req, res) => {
     domain: domain.trim(),
     market,
     analysisLens: analysisLens || 'Commercial diligence',
+    enrichmentData: enrichmentData || null,
   }, db).then((reportUrl) => {
     console.log(`[reports] Report ${reportId} completed: ${reportUrl}`);
   }).catch((err) => {
