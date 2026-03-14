@@ -781,7 +781,7 @@ Include: Founded (year, city), headquarters, founders + backgrounds, business mo
 ## 2. Financial Analysis  
 Include: Revenue trend (3+ years with % growth), latest revenue figure, gross margin, EBITDA, funding history with investors + valuations, revenue channel breakdown (DTC vs wholesale), geographic breakdown, AOV, repeat purchase rate.
 
-Format as professional HTML sections with <h2>, <p>, <ul> tags. Use <span class="source-tag">[Source: ID]</span> after each factual claim."""
+Format as professional HTML sections with <h2>, <p>, <ul> tags. Use <span class=\"source-tag\">[Source: ID]</span> after each factual claim."""
 
     batch1_html = _gpt_call(batch1_system, batch1_prompt, 4000)
 
@@ -806,7 +806,7 @@ Include: Monthly website traffic (with trend), traffic channels breakdown, top g
 ## 4. Customer Sentiment Analysis
 Include: Trustpilot rating (exact score + review count), key praise themes (2-3 with example quotes), key complaint themes (2-3 with example quotes), overall sentiment assessment.
 
-Format as professional HTML with <h2>, <p>, <ul> tags. Use <span class="source-tag">[Source: ID]</span> after each factual claim."""
+Format as professional HTML with <h2>, <p>, <ul> tags. Use <span class=\"source-tag\">[Source: ID]</span> after each factual claim."""
 
     batch2_html = _gpt_call(batch1_system, batch2_prompt, 4000)
 
@@ -847,7 +847,7 @@ Include:
 - Key value creation levers
 - Recommended next steps for DD
 
-Format as professional HTML with <h2>, <p>, <ul>, <table> tags where appropriate. Use <span class="source-tag">[Source: ID]</span> after each factual claim."""
+Format as professional HTML with <h2>, <p>, <ul>, <table> tags where appropriate. Use <span class=\"source-tag\">[Source: ID]</span> after each factual claim."""
 
     batch3_html = _gpt_call(batch1_system, batch3_prompt, 6000)
 
@@ -1303,6 +1303,7 @@ if __name__ == "__main__":
     parser.add_argument("--brand", required=True, help="Brand name")
     parser.add_argument("--domain", required=True, help="Brand domain")
     parser.add_argument("--market", required=True, help="Market category")
+    parser.add_argument("--lens", default="Commercial diligence", help="Analysis lens (reserved for future use)")
     parser.add_argument("--report-id", required=True, help="Report ID")
     parser.add_argument("--output-dir", required=True, help="Output directory")
     args = parser.parse_args()
