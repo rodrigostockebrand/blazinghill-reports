@@ -1312,7 +1312,7 @@ def main(brand_name, domain, market, report_id=None, output_dir="."):
     log(f"Phase 3 complete in {t3-t2:.1f}s")
 
     # Save HTML
-    html_path = output_dir / f"{report_id}_report.html"
+    html_path = output_dir / "index.html"
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     log(f"Report saved: {html_path}")
@@ -1323,10 +1323,11 @@ def main(brand_name, domain, market, report_id=None, output_dir="."):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="BlazingHill Report Engine v3")
-    parser.add_argument("brand_name", help="Brand name (e.g., 'Gym Shark')")
-    parser.add_argument("domain", help="Domain (e.g., 'gymshark.com')")
-    parser.add_argument("market", help="Market category (e.g., 'athletic apparel DTC')")
-    parser.add_argument("--report-id", help="Optional report ID")
-    parser.add_argument("--output-dir", default=".", help="Output directory")
+    parser.add_argument("--brand", required=True, help="Brand name")
+    parser.add_argument("--domain", required=True, help="Domain")
+    parser.add_argument("--market", default="United States", help="Market")
+    parser.add_argument("--lens", default="Commercial diligence", help="Analysis lens")
+    parser.add_argument("--report-id", required=True, help="Report ID")
+    parser.add_argument("--output-dir", required=True, help="Output directory")
     args = parser.parse_args()
-    main(args.brand_name, args.domain, args.market, args.report_id, args.output_dir)
+    main(args.brand, args.domain, args.market, args.report_id, args.output_dir)
