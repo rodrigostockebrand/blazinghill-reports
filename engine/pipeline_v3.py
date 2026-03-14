@@ -45,13 +45,14 @@ def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-# --- Cashmere API (PitchBook, CB Insights, Statista) ---
+# ─── Cashmere API (PitchBook, CB Insights, Statista) ───
 
 def _cashmere_search(query, collection_id, limit=5):
     """Search Cashmere API for premium data sources."""
     if not CASHMERE_API_KEY:
-        log(f"  WARN: No CASHMERE_API_KEY -- skipping premium search for: {query[:50]}")
+        log(f"  WARN: No CASHMERE_API_KEY — skipping premium search for: {query[:50]}")
         return []
+
     try:
         resp = requests.get(
             "https://cashmere.io/api/v2/search",
@@ -61,6 +62,7 @@ def _cashmere_search(query, collection_id, limit=5):
         )
         resp.raise_for_status()
         data = resp.json()
+        # Normalize response — may be a list or dict with "results"
         if isinstance(data, list):
             return data
         elif isinstance(data, dict):
@@ -89,7 +91,7 @@ def _extract_premium_data(results, source_name):
     return extracted
 
 
-# --- Perplexity API ---
+# ─── Perplexity API ───
 
 def _perplexity_call(system_msg, user_msg, max_tokens=4000):
     """Make a Perplexity API call. Returns (content, citations_list)."""
@@ -119,8 +121,15 @@ def _perplexity_call(system_msg, user_msg, max_tokens=4000):
 
 
 def _perplexity_call_with_sources(system_msg, user_msg, call_name, max_tokens=4000):
-    """Perplexity call that returns content with INLINE source attribution."""
+    """Perplexity call that returns content with INLINE source attribution.
+    
+    Instead of relying on numbered citations, we instruct Perplexity to include
+    source URLs inline in the text, and we also return the raw citation list
+    tagged with the call_name to prevent cross-contamination.
+    """
     content, citations = _perplexity_call(system_msg, user_msg, max_tokens)
+    
+    # Tag each citation with its source call name
     tagged_citations = []
     for i, url in enumerate(citations):
         tagged_citations.append({
@@ -129,10 +138,11 @@ def _perplexity_call_with_sources(system_msg, user_msg, call_name, max_tokens=40
             "call_name": call_name,
             "source_name": f"Perplexity ({call_name})",
         })
+    
     return content, tagged_citations
 
 
-# --- GPT API ---
+# ─── GPT API ───
 
 def _gpt_call(system_msg, user_msg, max_tokens=4000):
     """Make a GPT API call."""
@@ -158,20 +168,27 @@ def _gpt_call(system_msg, user_msg, max_tokens=4000):
     return data["choices"][0]["message"]["content"]
 
 
-# --- Phase 1: Multi-Source Research ---
+# ─── Phase 1: Multi-Source Research ───
 
 def run_research(brand_name, domain, market):
     """Phase 1: Collect data from premium sources + Perplexity, then structure."""
     today = datetime.now().strftime("%B %d, %Y")
+
     if not PERPLEXITY_API_KEY:
         raise RuntimeError("PERPLEXITY_API_KEY not set")
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY not set")
 
-    # Phase 1a: Premium Data Collection
+    # ── Phase 1a: Premium Data Collection ──
     log("Phase 1a: Collecting premium data (PitchBook, CB Insights, Statista)...")
-    premium_data = {"pitchbook": [], "cbinsights": [], "statista": []}
+    
+    premium_data = {
+        "pitchbook": [],
+        "cbinsights": [],
+        "statista": [],
+    }
 
+    # Also check for pre-enriched data file (from agent-assisted runs)
     pre_enriched_path = os.environ.get("ENRICHMENT_FILE", "")
     if pre_enriched_path and os.path.exists(pre_enriched_path):
         log(f"  Found pre-enriched data: {pre_enriched_path}")
@@ -185,9 +202,12 @@ def run_research(brand_name, domain, market):
         except Exception as e:
             log(f"  WARN: Failed to load pre-enriched data: {e}")
 
+    # If no pre-enriched data, try Cashmere API
     if not any(premium_data.values()) and CASHMERE_API_KEY:
         premium_queries = {
-            "pitchbook": [(PITCHBOOK_COMPANY, f"{brand_name}", "PitchBook")],
+            "pitchbook": [
+                (PITCHBOOK_COMPANY, f"{brand_name}", "PitchBook"),
+            ],
             "cbinsights": [
                 (CBINSIGHTS_RESEARCH, f"{brand_name} DTC brand growth strategy", "CB Insights"),
                 (CBINSIGHTS_RESEARCH, f"athletic apparel market trends acquisition valuation", "CB Insights"),
@@ -198,14 +218,17 @@ def run_research(brand_name, domain, market):
                 (STATISTA_FREE, f"{brand_name} fitness apparel ecommerce UK", "Statista"),
             ],
         }
+
         def do_cashmere_call(source_key, collection_id, query, source_name):
             results = _cashmere_search(query, collection_id)
             return source_key, _extract_premium_data(results, source_name)
+
         with ThreadPoolExecutor(max_workers=6) as executor:
             futures = []
             for source_key, queries in premium_queries.items():
                 for coll_id, query, src_name in queries:
                     futures.append(executor.submit(do_cashmere_call, source_key, coll_id, query, src_name))
+
             for future in as_completed(futures):
                 try:
                     source_key, data = future.result()
@@ -218,50 +241,96 @@ def run_research(brand_name, domain, market):
     st_count = len(premium_data["statista"])
     log(f"  Premium data: PitchBook={pb_count}, CB Insights={cb_count}, Statista={st_count}")
 
-    # Phase 1b: Perplexity Research
+    # ── Phase 1b: Perplexity Research (focused on digital/social/reviews) ──
     log("Phase 1b: Perplexity research (digital, social, reviews, supplemental)...")
-    pplx_system = f"""You are a senior research analyst. Today's date is {today}.
+
+    pplx_system = f"""You are a senior research analyst conducting PE due diligence. Today's date is {today}.
 Answer thoroughly with specific numbers, dates, and facts.
-When citing sources, include the ACTUAL URL in parentheses after each claim.
-Be precise with exact figures, currencies, percentages.
-Prioritize the MOST RECENT data available."""
+When citing sources, include the ACTUAL URL in parentheses after each claim, like: "Revenue was £646M (https://actual-source.com/article)".
+Be precise — include exact figures, currencies, percentages.
+Prioritize the MOST RECENT data available — prefer 2025-2026 data over older data.
 
+SOURCE QUALITY RULES:
+- For FINANCIAL data: prefer industry news sites (FashionUnited, TheIndustry.fashion, Business of Fashion, FashionNetwork, Bloomberg, Financial Times, Companies House filings) over blogs and marketing sites.
+- NEVER cite: 1stformations.co.uk, company formation agents, generic business blogs, or marketing case study blogs as sources for financial figures.
+- For SOCIAL MEDIA data: prefer official platform pages, HypeAuditor, SocialBlade, or SimilarWeb.
+- For CUSTOMER REVIEWS: always check Trustpilot directly at trustpilot.com/review/[domain].
+- For MARKET DATA: prefer Grand View Research, Mordor Intelligence, Statista, or Allied Market Research."""
+
+    # Call 1: Company + Financials (only if no PitchBook data)
     has_pitchbook = pb_count > 0
+    
     if has_pitchbook:
+        # We have PitchBook — only need supplemental financials
         prompt_core = f"""Research {brand_name} ({domain}) for supplemental financial data not typically in PitchBook:
-1. RECENT NEWS: Latest financial results for {brand_name} in 2025-2026.
-2. GROSS MARGIN & EBITDA: Search for "{brand_name} gross margin", "{brand_name} EBITDA".
-3. OPERATIONS: Manufacturing model, countries, logistics, supply chain risks.
-4. BUSINESS MODEL: Revenue channel split, geographic breakdown, AOV, repeat rate.
-For each fact, include the source URL in parentheses."""
+
+1. RECENT NEWS: Latest financial results announcements, press releases, or reports for {brand_name} in 2025-2026.
+2. GROSS MARGIN & EBITDA: What is {brand_name}'s reported gross margin and EBITDA margin? Search for "{brand_name} gross margin", "{brand_name} EBITDA", "{brand_name} profitability".
+3. OPERATIONS: Manufacturing model (own factory vs contract), manufacturing countries, logistics/fulfillment model, key supply chain risks.
+4. BUSINESS MODEL DETAILS: Revenue channel split (DTC vs wholesale vs marketplace percentage), geographic revenue breakdown, AOV estimates, repeat purchase rate.
+
+Important: For each fact, include the source URL in parentheses."""
     else:
-        prompt_core = f"""Research {brand_name} ({domain}) thoroughly. I need:
-1. COMPANY BASICS: Legal name, founding year, founding city, HQ, founders, employees, business model.
-2. FINANCIALS: Most recent revenue, revenue history 3+ years, gross margin, EBITDA, funding.
-3. OPERATIONS: Manufacturing, locations, logistics, supply chain risks.
-For each fact, include the source URL in parentheses."""
+        # No PitchBook — need full company + financials
+        prompt_core = f"""Research {brand_name} ({domain}) thoroughly for PE due diligence. I need VERIFIED data from AUTHORITATIVE sources:
 
-    prompt_digital = f"""Research the digital presence and customer reviews of {brand_name} ({domain}). Current data as of {today}:
-1. WEBSITE TRAFFIC: Monthly visits, trend, top channels, top countries, mobile pct, DA.
-2. SOCIAL MEDIA: Instagram, TikTok, Facebook, YouTube, Twitter/X follower counts.
-3. CUSTOMER REVIEWS: Trustpilot rating and review count, themes.
-4. TECH STACK: E-commerce platform, analytics, email marketing.
-For EACH data point, include the source URL in parentheses."""
+1. COMPANY BASICS: Legal name, founding year, founding CITY (where the company was literally started — this may differ from current HQ), current headquarters city, founders (names and backgrounds), employee count (most recent), business model, product categories.
+   - For founding city: search "{brand_name} founded where" or "where was {brand_name} started" — the founding city is where the founders literally started the business, NOT the current HQ.
 
+2. FINANCIALS (CRITICAL — search for the LATEST official results):
+   - Search: "{brand_name} revenue FY25", "{brand_name} annual results 2025", "{brand_name} financial results"
+   - Search: "{brand_name} Companies House filing" or "{brand_name} annual report"
+   - I need: Most recent annual revenue in NATIVE CURRENCY, revenue history for 3+ years, gross margin percentage, EBITDA (amount and margin), profit before tax.
+   - Also search: "{brand_name} funding round", "{brand_name} valuation", "{brand_name} investor"
+   - IMPORTANT: Use industry news sources (FashionUnited, TheIndustry.fashion, Business of Fashion, Bloomberg) NOT marketing blogs.
+
+3. OPERATIONS: Manufacturing model (own factory vs contract manufacturers), manufacturing countries, logistics/fulfillment model, key supply chain risks.
+
+For each fact, include the source URL in parentheses. Prefer official filings and industry trade publications over blogs."""
+
+    # Call 2: Digital + Social + Reviews (Perplexity is best for this)
+    prompt_digital = f"""Research the digital presence and customer reviews of {brand_name} ({domain}). I need CURRENT data as of {today}:
+
+1. WEBSITE TRAFFIC: Monthly visits, traffic trend, top channels (percentages), top countries, mobile percentage, domain authority.
+   - Search: "SimilarWeb {brand_name}" or "{domain} traffic"
+
+2. SOCIAL MEDIA (search for CURRENT follower counts from the platforms directly):
+   - Instagram: Search "{brand_name} Instagram followers" or check HypeAuditor at hypeauditor.com/instagram/{brand_name}/
+   - TikTok: Search "{brand_name} TikTok followers"
+   - Facebook, YouTube, Twitter/X: Current followers
+
+3. CUSTOMER REVIEWS (CRITICAL — get exact current numbers):
+   - Trustpilot: Go to trustpilot.com/review/{domain} — what is the EXACT star rating (e.g., 3.5 out of 5) and EXACT total review count? This is essential.
+   - If you cannot access Trustpilot directly, search: "Trustpilot {brand_name} rating reviews"
+   - Google Reviews if available
+   - Common praise themes (with example quotes) and complaint themes (with example quotes)
+
+4. TECH STACK: E-commerce platform (Shopify/Magento/custom), analytics tools, email marketing provider.
+
+IMPORTANT: For EACH data point, include the source URL in parentheses. I need TODAY'S numbers, not cached/old data."""
+
+    # Call 3: Competitors + Market (supplemental to Statista/PitchBook)
     prompt_market = f"""Research the competitive landscape for {brand_name} ({domain}) in the {market} market:
-1. DIRECT COMPETITORS: Revenue for Lululemon, Nike activewear, Under Armour, Alo Yoga, Vuori, Alphalete, YoungLA, Fabletics.
-2. MARKET SIZE: TAM/SAM/SOM for global activewear/athleisure.
-3. M&A COMPARABLES: Recent acquisitions/PE investments in athletic/DTC apparel 2020-2026.
-4. INDUSTRY TRENDS: Key trends in DTC fitness apparel.
-For each fact, include the source URL in parentheses."""
+
+1. DIRECT COMPETITORS: Identify 6-8 direct competitors to {brand_name} in the same product category and price segment. For each competitor provide: estimated annual revenue, price range, and key differentiator. Use industry reports and news, not blogs.
+
+2. MARKET SIZE: Total addressable market (TAM), serviceable addressable market (SAM), and serviceable obtainable market (SOM) for the market category {brand_name} operates in. Search for recent market research reports from Grand View Research, Mordor Intelligence, Statista, or Allied Market Research. Include CAGR growth rate.
+
+3. M&A COMPARABLES: Recent acquisitions or PE investments in comparable companies (2020-2026). Include deal values and EV/Revenue multiples. Search: "PE acquisition {market} DTC brand", "private equity investment apparel DTC".
+
+4. INDUSTRY TRENDS: Key trends affecting {brand_name}'s market — DTC evolution, sustainability, AI/personalization, retail expansion, etc.
+
+For each fact, include the source URL in parentheses. Prefer industry research reports and trade publications over blogs."""
 
     perplexity_findings = {}
-    perplexity_citations = {}
+    perplexity_citations = {}  # Separate citation namespaces per call
+
     def do_pplx_call(name, prompt, max_tok):
         log(f"  Perplexity: {name}...")
         content, tagged_cites = _perplexity_call_with_sources(pplx_system, prompt, name, max_tok)
         log(f"  {name}: {len(content)} chars, {len(tagged_cites)} citations")
         return name, content, tagged_cites
+
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = [
             executor.submit(do_pplx_call, "core", prompt_core, 4000),
@@ -275,55 +344,86 @@ For each fact, include the source URL in parentheses."""
                 perplexity_citations[name] = tagged_cites
             except Exception as e:
                 log(f"  ERROR in Perplexity call: {e}")
+
     log(f"  Perplexity done: {list(perplexity_findings.keys())}")
 
-    # Phase 1c: GPT Structuring with Source Attribution
+    # ── Phase 1c: GPT Structuring with Source Attribution ──
     log("Phase 1c: Structuring all data via GPT (with explicit source attribution)...")
+
+    # Build premium data summary for GPT
     premium_summary = ""
-    source_registry = []
+    source_registry = []  # Master list of all sources
 
     if premium_data["pitchbook"]:
-        premium_summary += "\n\n=== PITCHBOOK DATA (AUTHORITATIVE -- use as primary source for company/financial data) ===\n"
+        premium_summary += "\n\n=== PITCHBOOK DATA (AUTHORITATIVE — use as primary source for company/financial data) ===\n"
         for i, item in enumerate(premium_data["pitchbook"]):
             premium_summary += f"\n[PB-{i+1}] {item['title']}\n{item['content']}\nSource URL: {item['source_url']}\n"
-            source_registry.append({"id": f"PB-{i+1}", "name": f"PitchBook: {item['title']}", "url": item["source_url"], "publisher": "PitchBook", "type": "premium"})
+            source_registry.append({
+                "id": f"PB-{i+1}",
+                "name": f"PitchBook: {item['title']}",
+                "url": item["source_url"],
+                "publisher": "PitchBook",
+                "type": "premium",
+            })
 
     if premium_data["statista"]:
-        premium_summary += "\n\n=== STATISTA DATA (AUTHORITATIVE -- use for market sizing and industry data) ===\n"
+        premium_summary += "\n\n=== STATISTA DATA (AUTHORITATIVE — use for market sizing and industry data) ===\n"
         for i, item in enumerate(premium_data["statista"]):
             premium_summary += f"\n[ST-{i+1}] {item['title']}\n{item['content']}\nSource URL: {item['source_url']}\n"
-            source_registry.append({"id": f"ST-{i+1}", "name": f"Statista: {item['title']}", "url": item["source_url"], "publisher": "Statista", "type": "premium"})
+            source_registry.append({
+                "id": f"ST-{i+1}",
+                "name": f"Statista: {item['title']}",
+                "url": item["source_url"],
+                "publisher": "Statista",
+                "type": "premium",
+            })
 
     if premium_data["cbinsights"]:
         premium_summary += "\n\n=== CB INSIGHTS DATA (use for market trends, DTC strategy, competitive analysis) ===\n"
         for i, item in enumerate(premium_data["cbinsights"]):
             premium_summary += f"\n[CB-{i+1}] {item['title']}\n{item['content']}\nSource URL: {item['source_url']}\n"
-            source_registry.append({"id": f"CB-{i+1}", "name": f"CB Insights: {item['title']}", "url": item["source_url"], "publisher": "CB Insights", "type": "premium"})
+            source_registry.append({
+                "id": f"CB-{i+1}",
+                "name": f"CB Insights: {item['title']}",
+                "url": item["source_url"],
+                "publisher": "CB Insights",
+                "type": "premium",
+            })
 
+    # Build Perplexity findings with SEPARATE citation lists per call
     pplx_summary = ""
     for call_name in ["core", "digital", "market"]:
         if call_name in perplexity_findings:
             pplx_summary += f"\n\n=== PERPLEXITY RESEARCH: {call_name.upper()} ===\n"
             pplx_summary += perplexity_findings[call_name]
+            
             cites = perplexity_citations.get(call_name, [])
             if cites:
                 pplx_summary += f"\n\nCITATIONS FOR {call_name.upper()} (numbered references in the text above refer ONLY to these URLs):\n"
                 for c in cites:
                     ref_id = f"PPLX-{call_name[0].upper()}{c['index']}"
                     pplx_summary += f"  [{c['index']}] = [{ref_id}] {c['url']}\n"
-                    source_registry.append({"id": ref_id, "name": f"Web: {c['url'][:60]}", "url": c["url"], "publisher": "Web Source", "type": "web"})
+                    source_registry.append({
+                        "id": ref_id,
+                        "name": f"Web: {c['url'][:60]}",
+                        "url": c["url"],
+                        "publisher": "Web Source",
+                        "type": "web",
+                    })
 
     structure_system = f"""You are a data extraction specialist for PE due diligence research.
 Extract structured JSON from multi-source research findings.
+
 CRITICAL RULES:
 1. Extract EVERY specific number, date, and fact mentioned.
-2. For EVERY data point, set source_id to the reference ID that contains that data.
+2. For EVERY data point, set source_id to the reference ID (e.g., "PB-1", "ST-2", "CB-1", "PPLX-D3") that contains that data.
 3. For source_url: copy the EXACT URL from the source entry. NEVER fabricate URLs.
 4. PRIORITY ORDER for conflicting data: PitchBook > Statista > CB Insights > Perplexity
 5. If PitchBook says revenue is X but Perplexity says Y, USE PitchBook's figure.
 6. If a data point has no source, set source_id and source_url to null.
 7. Prefer the most recent data when multiple years are available.
-Return ONLY valid JSON -- no markdown, no code fences."""
+
+Return ONLY valid JSON — no markdown, no code fences."""
 
     structure_prompt = f"""Extract structured data about {brand_name} ({domain}) from these research findings.
 
@@ -336,18 +436,89 @@ SOURCE REGISTRY (use source_id and source_url from this list):
 
 Extract into this JSON structure. EVERY field with a data value MUST have source_id and source_url:
 {{
-  "company": {{"legal_name": "string or null", "brand_name": "{brand_name}", "domain": "{domain}", "founded_year": "year", "founded_city": "city", "current_headquarters": "city", "founders": [{{"name": "...", "title": "...", "background": "..."}}], "employee_count": {{"value": 0, "date": "YYYY-MM", "source_id": "PB-1", "source_url": "url"}}, "business_model": "DTC/B2B", "product_categories": [], "price_range": "$X-$Y", "key_markets": [], "unique_selling_points": [], "brand_positioning": "desc", "source_id": "PB-1", "source_url": "url"}},
-  "financials": {{"revenue_history": [{{"year": 2024, "revenue": "amount", "growth_yoy": "X%", "source_id": "id", "source_url": "url"}}], "latest_revenue": {{"year": 2024, "amount": "amount", "source_id": "id", "source_url": "url"}}, "gross_margin": {{"value": "X%", "basis": "reported/estimated", "source_id": "id", "source_url": "url"}}, "ebitda": {{"amount": "amount", "margin": "X%", "source_id": "id", "source_url": "url"}}, "funding_rounds": [{{"round": "type", "amount": "$XM", "date": "YYYY-MM", "investors": [], "post_money_valuation": "$XM", "source_id": "id", "source_url": "url"}}], "aov_estimate": {{"value": "$X", "source_id": "id", "source_url": "url"}}, "repeat_purchase_rate": {{"value": "X%", "source_id": "id", "source_url": "url"}}, "revenue_channels": {{"dtc_pct": "X%", "wholesale_pct": "X%", "source_id": "id", "source_url": "url"}}, "geographic_revenue": [{{"region": "name", "pct": "X%", "source_id": "id", "source_url": "url"}}]}},
-  "competitors": {{"direct": [{{"name": "Real Company", "revenue_est": "amount", "price_range": "$X-$Y", "differentiator": "desc", "market_position": "leader", "source_id": "id", "source_url": "url"}}], "market_size": {{"tam": "$XB", "sam": "$XB", "som": "$XM", "growth_rate": "X% CAGR", "source_id": "id", "source_url": "url"}}, "industry_trends": [], "ma_comparables": [{{"target": "company", "acquirer": "buyer", "year": 2024, "value": "$XM", "ev_revenue": "X.Xx", "source_id": "id", "source_url": "url"}}]}},
-  "digital_marketing": {{"monthly_traffic": {{"value": "XM visits", "source_id": "id", "source_url": "url"}}, "traffic_trend": "growing/stable/declining", "top_channels": [{{"channel": "Organic", "pct": "X%"}}], "top_countries": [{{"country": "US", "pct": "X%"}}], "social_media": {{"instagram": {{"followers": "XM", "source_id": "id", "source_url": "url"}}, "tiktok": {{"followers": "XM", "source_id": "id", "source_url": "url"}}, "facebook": {{"followers": "XK"}}, "youtube": {{"subscribers": "XK"}}, "twitter": {{"followers": "XK"}}}}, "tech_stack": []}},
-  "customer_sentiment": {{"trustpilot": {{"rating": 0.0, "reviews": 0, "source_id": "id", "source_url": "url"}}, "praise_themes": [{{"theme": "desc", "quote": "quote"}}], "complaint_themes": [{{"theme": "desc", "quote": "quote"}}]}},
-  "operations": {{"manufacturing": "type", "manufacturing_locations": [], "logistics": "type", "supply_chain_risks": []}}
+  "company": {{
+    "legal_name": "string or null",
+    "brand_name": "{brand_name}",
+    "domain": "{domain}",
+    "founded_year": "year",
+    "founded_city": "city",
+    "current_headquarters": "city",
+    "founders": [{{"name": "...", "title": "...", "background": "..."}}],
+    "employee_count": {{"value": number, "date": "YYYY-MM", "source_id": "PB-1", "source_url": "url"}},
+    "business_model": "DTC / B2B / etc",
+    "product_categories": ["cat1", "cat2"],
+    "price_range": "$X-$Y",
+    "key_markets": ["market1"],
+    "unique_selling_points": ["usp1"],
+    "brand_positioning": "description",
+    "source_id": "PB-1",
+    "source_url": "url"
+  }},
+  "financials": {{
+    "revenue_history": [{{"year": 2024, "revenue": "amount with currency", "growth_yoy": "X%", "source_id": "id", "source_url": "url"}}],
+    "latest_revenue": {{"year": 2024, "amount": "amount with currency", "source_id": "id", "source_url": "url"}},
+    "gross_margin": {{"value": "X%", "basis": "reported/estimated", "source_id": "id", "source_url": "url"}},
+    "ebitda": {{"amount": "£XM", "margin": "X%", "source_id": "id", "source_url": "url"}},
+    "funding_rounds": [{{"round": "type", "amount": "$XM", "date": "YYYY-MM", "investors": ["name"], "post_money_valuation": "$XM", "revenue_at_deal": "$XM", "source_id": "id", "source_url": "url"}}],
+    "aov_estimate": {{"value": "$X", "source_id": "id", "source_url": "url"}},
+    "repeat_purchase_rate": {{"value": "X%", "source_id": "id", "source_url": "url"}},
+    "revenue_channels": {{"dtc_pct": "X%", "wholesale_pct": "X%", "source_id": "id", "source_url": "url"}},
+    "geographic_revenue": [{{"region": "name", "pct": "X%", "source_id": "id", "source_url": "url"}}]
+  }},
+  "competitors": {{
+    "direct": [
+      {{
+        "name": "Real Company Name",
+        "revenue_est": "amount",
+        "price_range": "$X-$Y",
+        "differentiator": "description",
+        "market_position": "leader/challenger/niche",
+        "source_id": "id",
+        "source_url": "url"
+      }}
+    ],
+    "market_size": {{"tam": "$XB", "sam": "$XB", "som": "$XM", "growth_rate": "X% CAGR", "source_id": "id", "source_url": "url"}},
+    "industry_trends": ["trend1"],
+    "ma_comparables": [
+      {{"target": "company", "acquirer": "buyer", "year": 2024, "value": "$XM", "ev_revenue": "X.Xx", "source_id": "id", "source_url": "url"}}
+    ]
+  }},
+  "digital_marketing": {{
+    "monthly_traffic": {{"value": "XM visits", "source_id": "id", "source_url": "url"}},
+    "traffic_trend": "growing/stable/declining",
+    "top_channels": [{{"channel": "Organic", "pct": "X%"}}],
+    "top_countries": [{{"country": "US", "pct": "X%"}}],
+    "social_media": {{
+      "instagram": {{"followers": "XM", "source_id": "id", "source_url": "url"}},
+      "tiktok": {{"followers": "XM", "source_id": "id", "source_url": "url"}},
+      "facebook": {{"followers": "XK"}},
+      "youtube": {{"subscribers": "XK"}},
+      "twitter": {{"followers": "XK"}}
+    }},
+    "tech_stack": ["platform1"]
+  }},
+  "customer_sentiment": {{
+    "trustpilot": {{"rating": X.X, "reviews": XXXXX, "source_id": "id", "source_url": "url"}},
+    "praise_themes": [{{"theme": "description", "quote": "actual quote"}}],
+    "complaint_themes": [{{"theme": "description", "quote": "actual quote"}}]
+  }},
+  "operations": {{
+    "manufacturing": "own factory / contract / mixed",
+    "manufacturing_locations": ["country1"],
+    "logistics": "3PL / in-house",
+    "supply_chain_risks": ["risk1"]
+  }}
 }}
 
-CRITICAL: PitchBook=PRIMARY for revenue/employees/funding. Statista=market size. Perplexity=digital/social. Every numeric value MUST have source_id and source_url or null."""
+CRITICAL: 
+- Use PitchBook data as the PRIMARY source for revenue, employees, funding, valuation.
+- Use Statista for market size and industry data.
+- Use Perplexity for digital/social/reviews data.
+- Every numeric value MUST have a source_id and source_url. If no source, use null."""
 
     gpt_response = _gpt_call(structure_system, structure_prompt, 8000)
     research = _parse_json(gpt_response)
+
     if not research:
         import re
         json_match = re.search(r'\{[\s\S]*\}', gpt_response)
@@ -361,8 +532,9 @@ CRITICAL: PitchBook=PRIMARY for revenue/employees/funding. Statista=market size.
             log("WARN: No JSON in GPT structuring response")
             research = {}
 
-    # Phase 1d: Gap-filling
+    # ── Phase 1d: Gap-filling ──
     log("Phase 1d: Checking for critical data gaps...")
+
     financials = research.get("financials", {})
     latest_rev = financials.get("latest_revenue", {})
     sentiment = research.get("customer_sentiment", {})
@@ -373,20 +545,25 @@ CRITICAL: PitchBook=PRIMARY for revenue/employees/funding. Statista=market size.
 
     gap_queries = []
     if not latest_rev or not latest_rev.get("amount"):
-        gap_queries.append(("revenue", f"What is {brand_name} most recent official annual revenue? Give exact figure in native currency."))
+        gap_queries.append(("revenue", f"What is {brand_name} most recent official annual revenue? Search for '{brand_name} revenue 2025', '{brand_name} financial results FY25'. Give the exact figure in native currency."))
+
     if not tp or not tp.get("rating"):
-        gap_queries.append(("trustpilot", f"What is the current Trustpilot rating for {brand_name}? Star rating and total review count?"))
+        gap_queries.append(("trustpilot", f"What is the current Trustpilot rating for {brand_name}? Search for 'Trustpilot {brand_name}'. What star rating (out of 5) and total review count?"))
+
     if not ig or not ig.get("followers"):
-        gap_queries.append(("instagram", f"How many Instagram followers does {brand_name} have currently?"))
+        gap_queries.append(("instagram", f"How many Instagram followers does {brand_name} have currently? Search for '{brand_name} Instagram followers' or 'HypeAuditor {brand_name}'."))
 
     if gap_queries:
         log(f"  Found {len(gap_queries)} gaps: {[q[0] for q in gap_queries]}. Running targeted searches...")
+        
         def do_gap_call(name, prompt):
             log(f"    Gap search: {name}...")
             content, cites = _perplexity_call(pplx_system, prompt, 2000)
             log(f"    {name}: {len(content)} chars, {len(cites)} citations")
+            # Tag citations
             tagged = [{"url": url, "call_name": f"gap_{name}"} for url in cites]
             return name, content, tagged
+
         with ThreadPoolExecutor(max_workers=3) as executor:
             gap_futures = [executor.submit(do_gap_call, n, p) for n, p in gap_queries]
             gap_findings = {}
@@ -398,528 +575,758 @@ CRITICAL: PitchBook=PRIMARY for revenue/employees/funding. Statista=market size.
                     gap_cites_all.extend(tagged)
                 except Exception as e:
                     log(f"    Gap search error: {e}")
+
         if gap_findings:
             log("  Merging gap findings...")
             gap_text = "\n\n".join(f"=== {name.upper()} ===\n{text}" for name, text in gap_findings.items())
             gap_cite_urls = "\n".join(f"  GAP-{i+1}: {c['url']}" for i, c in enumerate(gap_cites_all))
+
             merge_system = """You are a data extraction specialist. Extract specific data from these follow-up research findings.
 Return ONLY valid JSON. For source_url: use the URLs listed below. Never fabricate URLs."""
+
             merge_prompt = f"""Fill data gaps for {brand_name}:
+
 {gap_text}
+
 AVAILABLE SOURCE URLs:
 {gap_cite_urls}
+
 Return JSON with ONLY the fields where you found data:
-{{"latest_revenue": {{"year": 2025, "amount": "amount", "source_url": "url_or_null"}}, "trustpilot": {{"rating": 0.0, "reviews": 0, "source_url": "url_or_null"}}, "instagram": {{"followers": "X.XM", "source_url": "url_or_null"}}}}"""
+{{
+  "latest_revenue": {{"year": 2025, "amount": "£XXM", "source_url": "url_or_null"}},
+  "trustpilot": {{"rating": X.X, "reviews": XXXXX, "source_url": "url_or_null"}},
+  "instagram": {{"followers": "X.XM", "source_url": "url_or_null"}}
+}}"""
+
             merge_response = _gpt_call(merge_system, merge_prompt, 2000)
             gap_data = _parse_json(merge_response)
+
             if gap_data:
                 log(f"  Gap data found: {list(gap_data.keys())}")
                 if gap_data.get("latest_revenue") and gap_data["latest_revenue"].get("amount"):
                     research.setdefault("financials", {})["latest_revenue"] = gap_data["latest_revenue"]
+                    log(f"    Updated revenue: {gap_data['latest_revenue']}")
                 if gap_data.get("trustpilot") and gap_data["trustpilot"].get("rating"):
                     research.setdefault("customer_sentiment", {})["trustpilot"] = gap_data["trustpilot"]
+                    log(f"    Updated Trustpilot: {gap_data['trustpilot']}")
                 if gap_data.get("instagram") and gap_data["instagram"].get("followers"):
                     research.setdefault("digital_marketing", {}).setdefault("social_media", {})["instagram"] = gap_data["instagram"]
+                    log(f"    Updated Instagram: {gap_data['instagram']}")
     else:
         log("  No critical gaps found.")
 
+    # ── Post-Processing: Source Validation & Staleness Checks ──
+    log("Post-processing: Source validation and staleness checks...")
+    research = _validate_and_clean_sources(research, brand_name, domain, pplx_system)
+
+    # Attach metadata
     research["_source_registry"] = source_registry
     research["_premium_data"] = {k: len(v) for k, v in premium_data.items()}
     research["_perplexity_calls"] = list(perplexity_findings.keys())
 
+    # Log key metrics
     financials = research.get("financials", {})
     latest_rev = financials.get("latest_revenue", {})
     sentiment = research.get("customer_sentiment", {})
     tp = sentiment.get("trustpilot", {})
-    digital = research.get("digital_marketing", {})
-    social = digital.get("social_media", {})
-    ig = social.get("instagram", {})
-    company = research.get("company", {})
-    log(f"Research complete:")
-    log(f"  Revenue: {latest_rev}")
-    log(f"  Trustpilot: {tp}")
-    log(f"  Instagram: {ig}")
-    log(f"  Founded: {company.get('founded_city')} | HQ: {company.get('current_headquarters')}")
-    log(f"  Sources: {len(source_registry)} total")
+    log(f"  Revenue: {latest_rev.get('amount', 'N/A')} ({latest_rev.get('year', 'N/A')})")
+    log(f"  Trustpilot: {tp.get('rating', 'N/A')} ({tp.get('reviews', 'N/A')} reviews)")
+
     return research
 
 
-# --- Phase 2: Report Generation ---
+# ─── Source Validation & Staleness Checks ───
 
-REPORT_SYSTEM = """You are a McKinsey-grade PE due diligence report writer.
-You produce investment-quality HTML report content for senior private equity partners.
-This report is being used to make million-dollar investment decisions. Any misinformation could jeopardize the deal.
-
-CRITICAL RULES:
-1. Write substantive analysis with minimum 2-3 paragraphs per section with specific data points
-2. Every numeric claim must have a source citation as a clickable link
-3. Use PE metrics throughout: EBITDA, EV/Revenue, LTV/CAC, payback periods, ROIC, IRR, MOIC
-4. Include Chart.js configurations where specified using REAL data from the research
-5. Tables must have real data, never empty rows or N/A for everything
-6. If exact data unavailable, provide industry-benchmark estimates labeled (Est.)
-7. Competitor names must be REAL companies
-8. Return ONLY the HTML content, no markdown, no code fences
-
-SOURCE CITATION RULES (CRITICAL):
-9. ONLY use source URLs from the SOURCE REGISTRY provided. NEVER invent URLs.
-10. Format citations as: <a href="EXACT_URL_FROM_REGISTRY" target="_blank">Publisher Name</a>
-11. If no URL available, cite as plain text (Source: Company annual report) with NO hyperlink.
-12. NEVER create URLs with future dates or URLs not in the registry.
-13. When citing PitchBook data, link to the PitchBook source URL and label it PitchBook.
-14. When citing Statista data, link to the Statista source URL and label it Statista.
-
-DATA PRIORITY (when sources conflict):
-15. PitchBook > Statista > CB Insights > Perplexity web sources
-16. Use the MOST RECENT revenue figure. For UK companies, use native currency.
-17. Founding city and current HQ city may differ -- check both fields."""
-
-SECTION_DEFS = [
-    (1, "Executive Summary", "KPI cards (6-8), investment thesis box, key risks & opportunities table"),
-    (2, "Company Profile", "Corporate fundamentals stat-rows, product portfolio, revenue timeline, transaction summary"),
-    (3, "PE Economics", "EBITDA analysis, unit economics (AOV/CAC/LTV/payback/margin), M&A comps, return scenarios, Chart: EBITDA waterfall"),
-    (4, "Digital Marketing Performance", "Traffic overview, channel mix, geo distribution, funnel metrics, Chart: Traffic channel bar"),
-    (5, "Competitive Intelligence", "Competitor comparison table (5+), Chart: Radar chart vs top competitors on 6 dimensions"),
-    (6, "AI & Innovation Assessment", "Overall score, capability assessment, AI transfer plan, Chart: AI readiness heatmap"),
-    (7, "Risk Assessment", "Risk matrix (risk/likelihood/impact/severity/mitigation), Chart: Risk severity horizontal bars"),
-    (8, "Channel Economics", "ROAS by channel, Meta CPM trend, Chart: Channel ROI bar"),
-    (9, "Cohort Analysis", "DTC retention benchmarks, LTV build, Chart: Retention decay curve"),
-    (10, "TAM / SAM / SOM", "Market sizing stat-rows, growth dynamics, Chart: TAM/SAM/SOM nested visualization"),
-    (11, "Customer Sentiment", "Aggregate ratings, praise themes, complaint themes, Chart: Sentiment distribution"),
-    (12, "Content Strategy Gap", "SEO opportunity analysis, keyword table, content roadmap"),
-    (13, "Value Creation Roadmap", "Value lever table, DTC case studies"),
-    (14, "Pricing Strategy & Architecture", "Pricing tiers, competitive pricing map, maturity score, Chart: Pricing comparison"),
-    (15, "Revenue Quality & Concentration", "Revenue growth, channel mix, geographic concentration, Chart: Revenue doughnut"),
-    (16, "Management & Organization", "Founding team, structure, key person risk"),
-    (17, "Technology Stack Assessment", "Core platform, payment infra, tech gap analysis"),
-    (18, "Brand Equity Deep Dive", "Review breakdown, themes, brand dimensions, Chart: Brand equity radar"),
-    (19, "Supply Chain & Fulfillment", "Manufacturing model, post-acquisition synergies"),
-    (20, "Regulatory & Compliance", "GDPR assessment, local regulations, product safety, timeline"),
-    (21, "Working Capital & Cash Dynamics", "Cash conversion cycle, FCF build, seasonal dynamics"),
-    (22, "Exit Analysis & M&A Comparables", "M&A comps, exit paths, Chart: M&A scatter"),
-    (23, "Geographic Expansion Roadmap", "Priority markets, expansion phasing"),
-    (24, "Marketing-Adjusted LTV Model", "LTV scenarios, impact waterfall, Chart: LTV waterfall"),
-    (25, "CAC Payback & Efficiency", "CAC by channel, organic vs paid, Chart: CAC payback bar"),
-    (26, "Contribution Margin Bridge", "Margin bridge steps, optimization, Chart: Contribution margin waterfall"),
-    (27, "Marketing P&L & Budget Allocation", "Budget allocation, full-funnel architecture, Chart: Marketing spend pie"),
-    (28, "Customer Segmentation & RFM", "RFM segment table, LTV amplification"),
-    (29, "Repeat Purchase & Retention", "Retention analysis, structural constraints, Chart: Retention curve"),
-    (30, "AOV Dynamics & Uplift Levers", "AOV by geography, uplift roadmap"),
-    (31, "NPS & Voice of Customer", "VOC theme decomposition, NPS estimate"),
-    (32, "Customer Journey & Funnel", "Full-funnel stage analysis, Chart: Conversion funnel"),
-    (33, "SEO Authority & Organic Position", "Domain authority comparison, keyword gaps, Chart: SEO comparison"),
-    (34, "Paid Media Performance", "Paid media efficiency, ROAS benchmarks"),
-    (35, "Email & CRM Maturity", "CRM maturity audit, email revenue upside"),
-    (36, "CRO Analysis", "Conversion audit, mobile-first priorities"),
-    (37, "Social Commerce & Influencer ROI", "UGC program, influencer scale"),
-    (38, "Share of Voice Analysis", "Competitive social footprint, SOV analysis"),
-    (39, "Price Elasticity & Discounting", "Discount dependency, exit roadmap"),
-    (40, "Category Disruption Threats", "Threat matrix with probability and impact"),
-    (41, "Cross-Border E-Commerce", "Localization scorecard, market entry analysis"),
-    (42, "Brand Trademark & IP Valuation", "IP inventory, licensing potential"),
-    (43, "First-Party Data Asset", "Data valuation, GDPR compliance"),
-    (44, "Content & Creative Library", "Content inventory, production model, reusability"),
-    (45, "MarTech Stack ROI", "Tech stack table, optimization recommendations"),
-    (46, "100-Day Post-Close Plan", "Phased action plan (Day 1-30, 31-60, 61-100), budget reallocation"),
-    (47, "EBITDA Bridge", "Marketing-driven EBITDA levers, Chart: EBITDA bridge waterfall"),
-    (48, "Scenario Analysis", "Bull/Base/Bear assumptions, sensitivity drivers, Chart: Scenario comparison"),
-    (49, "Investment Committee Summary", "Deal scorecard (10 dimensions), red flags, thesis, conditions, returns, Chart: Deal scorecard radar"),
-    (50, "Appendix", "Data sources table, methodology notes"),
+SOURCE_BLOCKLIST = [
+    "1stformations.co.uk",
+    "companieshouse.service.gov.uk/company",  # Keep this for actual filings, block only generic pages
+    "businessofapps.com",
+    "comparably.com",
+    "craft.co",
+    "dnb.com",
+    "growjo.com",
+    "incfile.com",
+    "indeed.com",
+    "owler.com",
+    "rocketreach.co",
+    "similarweb.com/website",  # SimilarWeb overview pages are OK, but /website/ subpages can be stale
+    "startuptalky.com",
+    "theceomagazine.com",
+    "tracxn.com",
+    "wisesheets.io",
+    "zoominfo.com",
 ]
 
 
-def _build_batch_prompt(brand_name, domain, market, research_json, source_registry_json, start_section, end_section):
-    """Build prompt for a batch of sections with explicit source registry."""
-    batch_sections = [s for s in SECTION_DEFS if start_section <= s[0] <= end_section]
-    section_list = "\n".join(f"{num:02d}. {title} -- {desc}" for num, title, desc in batch_sections)
-    return f"""Using the research data below, generate sections {start_section:02d}-{end_section:02d} of a PE due diligence report for {brand_name} ({domain}) in the {market} market.
-
-RESEARCH DATA (all data points include source_id and source_url for attribution):
-{research_json}
-
-SOURCE REGISTRY (use ONLY these URLs for citations -- NEVER invent URLs):
-{source_registry_json}
-
-OUTPUT FORMAT:
-Return a sequence of HTML section blocks. Each section must follow this structure:
-
-<section class="section" id="sXX">
-  <div class="section-label">Section XX</div>
-  <h2>Section Title</h2>
-  <p class="section-intro">Substantive intro paragraph with <a href="SOURCE_URL" target="_blank">Source Name</a>.</p>
-  <h3 class="subsection">Subsection Title</h3>
-</section>
-
-COMPONENT TEMPLATES:
-
-KPI Cards:
-<div class="kpi-grid">
-  <div class="kpi-card kpi-navy">
-    <div class="kpi-label">METRIC NAME</div>
-    <div class="kpi-value">VALUE</div>
-    <div class="kpi-sub">Time period</div>
-    <div class="kpi-source"><a href="URL_FROM_REGISTRY" target="_blank">PitchBook</a></div>
-  </div>
-</div>
-
-Tables (MUST include Source column):
-<div class="table-wrap">
-  <table>
-    <thead><tr><th>Metric</th><th>Value</th><th>Source</th></tr></thead>
-    <tbody><tr><td>Revenue</td><td>amount</td><td><a href="URL" target="_blank">PitchBook</a></td></tr></tbody>
-  </table>
-</div>
-
-Stat Rows:
-<div class="stat-row"><span class="stat-label">Label</span><span class="stat-value">Value</span><span class="stat-note"><a href="URL" target="_blank">Source</a></span></div>
-
-Chart.js:
-<div class="chart-container" style="position:relative;height:350px;margin:24px 0;">
-  <canvas id="chartUniqueId"></canvas>
-</div>
-<script>
-new Chart(document.getElementById('chartUniqueId'), {{
-  type: 'bar',
-  data: {{ labels: [...], datasets: [{{ ... }}] }},
-  options: {{ responsive: true, maintainAspectRatio: false }}
-}});
-</script>
-<p class="tiny text-muted">Sources: <a href="URL" target="_blank">PitchBook</a></p>
-
-CHART COLORS: Navy #1a2332, Blue #2563eb, Green #16a34a, Amber #d97706, Red #dc2626
-
-GENERATE THESE SECTIONS:
-{section_list}
-
-CRITICAL:
-- Use ONLY data from the research. Every number MUST come from the research data.
-- Every data point MUST cite a source from the SOURCE REGISTRY using the exact URL.
-- If data unavailable, mark (Est.) and cite as plain text (Source: Industry benchmark)
-- Charts use REAL data from research. Canvas IDs must be unique.
-- Write for senior PE partners. Minimum 2-3 paragraphs + tables/charts per section.
-- Return ONLY HTML."""
+def _is_blocklisted(url):
+    """Check if a URL is from a blocklisted source."""
+    if not url:
+        return False
+    url_lower = url.lower()
+    return any(blocked in url_lower for blocked in SOURCE_BLOCKLIST)
 
 
-def run_report_generation(brand_name, domain, market, research_data, output_dir):
-    """Phase 2: Generate full HTML report body via GPT-4.1 in 3 batches."""
-    log("Phase 2: Generating report via GPT-4.1 (3 batches)...")
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY not set")
+def _check_revenue_staleness(financials, brand_name, pplx_system):
+    """Check if revenue data is stale (>18 months old) and re-search if needed."""
+    latest_rev = financials.get("latest_revenue", {})
+    if not latest_rev or not latest_rev.get("year"):
+        return financials  # No revenue data to check
 
-    clean_research = {k: v for k, v in research_data.items() if not k.startswith("_")}
-    research_json = json.dumps(clean_research, indent=2, default=str)
-    source_registry = research_data.get("_source_registry", [])
-    source_registry_json = json.dumps(source_registry, indent=2, default=str) if source_registry else "[]"
+    rev_year = latest_rev.get("year")
+    current_year = datetime.now().year
+    current_month = datetime.now().month
 
-    batches = [
-        {"start": 1, "end": 17, "label": "Batch 1/3 (Sections 1-17)"},
-        {"start": 18, "end": 34, "label": "Batch 2/3 (Sections 18-34)"},
-        {"start": 35, "end": 50, "label": "Batch 3/3 (Sections 35-50)"},
-    ]
+    # Consider stale if the revenue year is more than 18 months ago
+    # e.g., if it's March 2026 and we have 2023 revenue, that's stale
+    months_since_rev = (current_year - rev_year) * 12 + current_month
+    
+    if months_since_rev > 18:
+        log(f"  WARN: Revenue data for year {rev_year} is {months_since_rev} months old (>18) — re-searching for latest...")
+        
+        try:
+            staleness_prompt = f"""URGENT: The revenue data I have for this company is from {rev_year}, which is now {months_since_rev} months old.
 
-    def generate_batch(batch):
-        prompt = _build_batch_prompt(brand_name, domain, market, research_json, source_registry_json, batch["start"], batch["end"])
-        resp = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "gpt-4.1", "messages": [{"role": "system", "content": REPORT_SYSTEM}, {"role": "user", "content": prompt}], "max_tokens": 32000, "temperature": 0.15},
-            timeout=300,
-        )
-        if resp.status_code != 200:
-            log(f"OpenAI API error for {batch['label']}: {resp.status_code}: {resp.text[:300]}")
-            resp.raise_for_status()
-        data = resp.json()
-        body = data["choices"][0]["message"]["content"].strip()
-        if body.startswith("```"):
-            lines = body.split("\n")
-            lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            body = "\n".join(lines)
-        finish = data["choices"][0].get("finish_reason", "stop")
-        log(f"{batch['label']}: {len(body)} chars, finish_reason={finish}")
-        return (batch["start"], body)
+Search specifically for the MOST RECENT financial results for {brand_name}:
+- Search: "{brand_name} revenue 2025", "{brand_name} annual results 2025", "{brand_name} FY25"
+- Search: "{brand_name} revenue 2024", "{brand_name} financial results 2024"
+- Search: "{brand_name} Companies House 2024", "{brand_name} Companies House 2025"
+- Check: companies.house.gov.uk for {brand_name}
 
-    results = {}
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {executor.submit(generate_batch, b): b for b in batches}
-        for future in as_completed(futures):
-            batch = futures[future]
-            try:
-                start, body = future.result()
-                results[start] = body
-            except Exception as e:
-                log(f"ERROR generating {batch['label']}: {e}")
-                results[batch["start"]] = f'<section class="section" id="s{batch["start"]:02d}"><h2>Generation failed</h2><p>{str(e)[:200]}</p></section>'
+I need:
+1. The MOST RECENT annual revenue figure with the year and source URL
+2. Has the company had any major financial events (fundraise, acquisition, IPO) since {rev_year}?
 
-    report_body = "\n\n".join(results[k] for k in sorted(results.keys()))
-    log(f"Full report: {len(report_body)} characters from {len(results)} batches")
-    return report_body
+For each fact, include the exact source URL in parentheses."""
 
+            content, cites = _perplexity_call(pplx_system, staleness_prompt, 2000)
+            
+            # Parse the response for updated revenue
+            if content and any(year_str in content for year_str in ["2024", "2025", "2026"]):
+                log(f"  Staleness check found newer data. Extracting...")
+                
+                cite_urls = "\n".join(f"  [{i+1}]: {url}" for i, url in enumerate(cites))
+                
+                extract_prompt = f"""Extract the most recent annual revenue from this text:
 
-# --- Phase 3: HTML Assembly ---
+{content}
 
-def assemble_full_report(brand_name, domain, market, report_body, output_dir):
-    """Phase 3: Wrap report body in full HTML with CSS, sidebar, and Chart.js CDN."""
-    import re
-    log("Phase 3: Assembling final HTML report...")
-    now = datetime.now()
+SOURCE URLs:
+{cite_urls}
 
-    css_path = os.path.join(os.path.dirname(__file__), '..', 'sample-report', 'style.css')
-    if os.path.exists(css_path):
-        with open(css_path, 'r', encoding='utf-8') as f:
-            css = f.read()
-    else:
-        css = _get_fallback_css()
+Return JSON only:
+{{"year": 2025, "amount": "£XXM", "source_url": "url_or_null"}}"""
 
-    sections = re.findall(r'<section[^>]*id="s(\d+)"[^>]*>.*?<h2>(.*?)</h2>', report_body, re.DOTALL)
-    if not sections:
-        sections = [(f"{i+1:02d}", f"Section {i+1:02d}") for i in range(50)]
-
-    sidebar_links = ""
-    for num, title in sections:
-        clean_title = re.sub(r'<[^>]+>', '', title).strip()
-        short_title = clean_title[:22] + "..." if len(clean_title) > 22 else clean_title
-        active = ' class="active"' if num == "01" else ""
-        sidebar_links += f'    <a href="#s{num}"{active}><span class="nav-num">{num}</span>{short_title}</a>\n'
-
-    html = f'''<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="robots" content="noindex, nofollow">
-  <title>{_esc(brand_name)} -- PE Marketing Due Diligence Report</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-  <style>
-{css}
-.chart-container {{ position: relative; margin: 24px 0; background: #fff; border: 1px solid var(--gray-200, #e2e8f0); border-radius: 8px; padding: 16px; }}
-.chart-container canvas {{ max-width: 100%; }}
-  </style>
-</head>
-<body>
-<div id="reportContent">
-<nav id="sidebar" role="navigation" aria-label="Report sections">
-  <div class="sidebar-header">
-    <div class="sidebar-logo">Private Equity</div>
-    <div class="sidebar-title">{_esc(brand_name)} DD<br>Marketing Due Diligence</div>
-    <span class="confidential-badge">Confidential</span>
-  </div>
-  <div class="sidebar-nav" id="sidebar-nav">
-{sidebar_links}  </div>
-  <div class="sidebar-footer">
-    {now.strftime("%B %Y")} &nbsp;·&nbsp; Confidential
-  </div>
-</nav>
-<button id="hamburger" aria-label="Toggle navigation" aria-expanded="false">&#9776;</button>
-<div id="overlay"></div>
-<main id="main">
-  <header class="report-header">
-    <div class="firm-label">Commercial Diligence · Private &amp; Confidential</div>
-    <h1>{_esc(brand_name)} -- PE Marketing Due Diligence</h1>
-    <div class="subtitle">Commercial Diligence · {_esc(domain)}</div>
-    <div class="report-meta">
-      <span>Subject: {_esc(brand_name)} ({_esc(domain)})</span>
-      <span>Date: {now.strftime("%B %Y")}</span>
-      <span>Market: {_esc(market)}</span>
-      <span>Status: Confidential Draft</span>
-    </div>
-  </header>
-{report_body}
-</main>
-</div>
-<script>
-(function() {{
-  const links = document.querySelectorAll('.sidebar-nav a');
-  const sections = [];
-  links.forEach(a => {{
-    const id = a.getAttribute('href')?.replace('#','');
-    const el = id ? document.getElementById(id) : null;
-    if (el) sections.push({{ el, link: a }});
-  }});
-  function updateActive() {{
-    let current = sections[0];
-    const scrollY = window.scrollY + 120;
-    for (const s of sections) {{
-      if (s.el.offsetTop <= scrollY) current = s;
-    }}
-    links.forEach(a => a.classList.remove('active'));
-    if (current) current.link.classList.add('active');
-  }}
-  window.addEventListener('scroll', updateActive, {{ passive: true }});
-  updateActive();
-  const hamburger = document.getElementById('hamburger');
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('overlay');
-  if (hamburger) {{
-    hamburger.addEventListener('click', () => {{
-      sidebar.classList.toggle('open');
-      overlay.classList.toggle('show');
-    }});
-    overlay?.addEventListener('click', () => {{
-      sidebar.classList.remove('open');
-      overlay.classList.remove('show');
-    }});
-    links.forEach(a => a.addEventListener('click', () => {{
-      sidebar.classList.remove('open');
-      overlay?.classList.remove('show');
-    }}));
-  }}
-}})();
-</script>
-</body>
-</html>'''
-
-    output_path = os.path.join(output_dir, "index.html")
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html)
-    log(f"Report assembled: {output_path} ({len(html)} chars)")
-    return output_path
+                response = _gpt_call("Extract revenue data. Return ONLY valid JSON.", extract_prompt, 500)
+                new_rev = _parse_json(response)
+                
+                if new_rev and new_rev.get("amount") and new_rev.get("year", 0) > rev_year:
+                    log(f"  Updated revenue: {new_rev['amount']} ({new_rev['year']}) vs old: {latest_rev.get('amount')} ({rev_year})")
+                    financials["latest_revenue"] = new_rev
+                    # Also add to history
+                    history = financials.get("revenue_history", [])
+                    if not any(r.get("year") == new_rev["year"] for r in history):
+                        history.append({"year": new_rev["year"], "revenue": new_rev["amount"], "source_url": new_rev.get("source_url")})
+                        financials["revenue_history"] = history
+                else:
+                    log(f"  Staleness re-search did not find newer data.")
+        except Exception as e:
+            log(f"  WARN: Staleness check failed: {e}")
+    
+    return financials
 
 
-def _esc(text):
-    if not text:
-        return ""
-    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
-
-
-def _get_fallback_css():
-    """Fallback CSS if sample-report/style.css not found."""
-    return ''':root {
-  --navy: #1a2332; --blue: #2563eb; --green: #16a34a;
-  --amber: #d97706; --red: #dc2626;
-  --gray-50: #f8fafc; --gray-100: #f1f5f9; --gray-200: #e2e8f0;
-  --gray-300: #cbd5e1; --gray-400: #94a3b8; --gray-500: #64748b;
-  --gray-600: #475569; --gray-700: #334155; --gray-800: #1e293b;
-  --sidebar-w: 260px;
-}
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; font-size: 16px; }
-body { font-family: 'Inter', sans-serif; color: var(--navy); background: white; line-height: 1.7; }
-a { color: var(--blue); text-decoration: none; }
-img { max-width: 100%; height: auto; display: block; }
-#sidebar { position: fixed; top: 0; left: 0; width: var(--sidebar-w); height: 100vh; background: var(--navy); color: #e2e8f0; display: flex; flex-direction: column; z-index: 100; overflow-y: auto; }
-.sidebar-header { padding: 24px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.1); }
-.sidebar-logo { font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--gray-400); }
-.sidebar-title { font-size: 15px; font-weight: 700; color: white; }
-.confidential-badge { display: inline-block; margin-top: 8px; padding: 2px 8px; font-size: 10px; text-transform: uppercase; background: rgba(220,38,38,0.2); color: #fca5a5; border-radius: 3px; }
-.sidebar-nav { flex: 1; padding: 12px 0; overflow-y: auto; }
-.sidebar-nav a { display: flex; align-items: center; padding: 7px 20px; font-size: 12.5px; color: var(--gray-400); text-decoration: none; border-left: 3px solid transparent; }
-.sidebar-nav a:hover { color: white; background: rgba(255,255,255,0.05); }
-.sidebar-nav a.active { color: white; background: rgba(37,99,235,0.15); border-left-color: var(--blue); font-weight: 600; }
-.nav-num { display: inline-block; width: 26px; font-size: 10px; font-weight: 700; color: var(--gray-500); }
-.sidebar-footer { padding: 12px 20px; font-size: 11px; color: var(--gray-500); border-top: 1px solid rgba(255,255,255,0.08); }
-#main { margin-left: var(--sidebar-w); padding: 48px 56px 80px; max-width: 1120px; }
-.report-header { margin-bottom: 48px; padding-bottom: 32px; border-bottom: 3px solid var(--navy); }
-.firm-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--gray-500); }
-.report-header h1 { font-size: 28px; font-weight: 800; color: var(--navy); }
-.subtitle { font-size: 15px; color: var(--gray-600); }
-.report-meta { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 12px; color: var(--gray-500); }
-.section { margin-bottom: 56px; padding-top: 24px; }
-.section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--blue); font-weight: 700; }
-.section h2 { font-size: 22px; font-weight: 800; color: var(--navy); padding-bottom: 12px; border-bottom: 2px solid var(--gray-200); }
-.section-intro { font-size: 15px; color: var(--gray-700); line-height: 1.8; margin-bottom: 24px; }
-h3.subsection { font-size: 16px; font-weight: 700; color: var(--navy); margin: 28px 0 12px; }
-.kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin: 24px 0; }
-.kpi-card { padding: 20px; border-radius: 8px; border: 1px solid var(--gray-200); background: var(--gray-50); }
-.kpi-card.kpi-navy { border-left: 4px solid var(--navy); }
-.kpi-card.kpi-blue { border-left: 4px solid var(--blue); }
-.kpi-card.kpi-green { border-left: 4px solid var(--green); }
-.kpi-card.kpi-amber { border-left: 4px solid var(--amber); }
-.kpi-card.kpi-red { border-left: 4px solid var(--red); }
-.kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--gray-500); }
-.kpi-value { font-size: 28px; font-weight: 800; color: var(--navy); }
-.kpi-sub { font-size: 12px; color: var(--gray-600); }
-.kpi-source { margin-top: 8px; font-size: 11px; }
-.kpi-source a { color: var(--blue); }
-.stat-row { display: flex; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--gray-100); gap: 12px; }
-.stat-label { font-size: 13px; color: var(--gray-500); min-width: 140px; }
-.stat-value { font-size: 14px; font-weight: 700; color: var(--navy); }
-.stat-note { font-size: 12px; color: var(--gray-400); }
-.table-wrap { overflow-x: auto; margin: 16px 0; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { background: var(--gray-50); font-weight: 700; text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--gray-200); }
-td { padding: 10px 12px; border-bottom: 1px solid var(--gray-100); }
-.tag { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
-.tag-risk { background: rgba(220,38,38,0.1); color: var(--red); }
-.tag-opp { background: rgba(22,163,74,0.1); color: var(--green); }
-.tag-watch { background: rgba(217,119,6,0.1); color: var(--amber); }
-.tag-high { background: rgba(220,38,38,0.1); color: var(--red); }
-.tag-med { background: rgba(217,119,6,0.1); color: var(--amber); }
-.tag-low { background: rgba(22,163,74,0.1); color: var(--green); }
-.thesis-box { background: var(--gray-50); border-left: 4px solid var(--blue); padding: 20px 24px; border-radius: 0 8px 8px 0; font-size: 15px; line-height: 1.8; }
-.report-list { padding-left: 20px; }
-.report-list li { margin-bottom: 8px; font-size: 14px; }
-.callout { padding: 16px 20px; border-radius: 8px; display: flex; gap: 12px; margin: 16px 0; }
-.callout.info { background: rgba(37,99,235,0.05); border: 1px solid rgba(37,99,235,0.15); }
-.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
-.tiny { font-size: 11px; }
-.text-muted { color: var(--gray-400); }
-#hamburger { display: none; position: fixed; top: 16px; left: 16px; z-index: 200; background: var(--navy); color: white; border: none; padding: 8px 12px; border-radius: 4px; font-size: 20px; cursor: pointer; }
-#overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 90; }
-@media (max-width: 768px) {
-  #sidebar { transform: translateX(-100%); transition: transform 0.3s; }
-  #sidebar.open { transform: translateX(0); }
-  #hamburger { display: block; }
-  #overlay.show { display: block; }
-  #main { margin-left: 0; padding: 24px 16px 60px; }
-  .two-col { grid-template-columns: 1fr; }
-  .kpi-grid { grid-template-columns: 1fr 1fr; }
-}'''
-
-
-def _parse_json(text):
-    text = text.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
+def _re_search_trustpilot(brand_name, domain, pplx_system):
+    """Dedicated Trustpilot re-search to get current rating."""
+    log(f"  Re-searching Trustpilot for {brand_name}...")
+    
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            try:
-                return json.loads(text[start:end])
-            except json.JSONDecodeError:
-                pass
+        tp_prompt = f"""I need the CURRENT Trustpilot rating for {brand_name} ({domain}).
+
+Please:
+1. Go directly to: trustpilot.com/review/{domain}
+2. Search: "Trustpilot {brand_name} review"
+3. Search: "site:trustpilot.com {brand_name}"
+
+I need:
+- Exact star rating out of 5 (e.g., 3.8)
+- Exact total number of reviews (e.g., 12,847)
+- The direct Trustpilot URL for {brand_name}
+- Breakdown of ratings if available (% 5-star, 4-star, etc.)
+- Most common praise and complaint themes
+
+Return the source URL for the Trustpilot page."""
+
+        content, cites = _perplexity_call(pplx_system, tp_prompt, 1500)
+        
+        if content:
+            cite_urls = "\n".join(f"  [{i+1}]: {url}" for i, url in enumerate(cites))
+            
+            extract_prompt = f"""Extract Trustpilot data from this text:
+
+{content}
+
+SOURCE URLs:
+{cite_urls}
+
+Return JSON only (null if not found):
+{{"rating": X.X, "reviews": XXXXX, "source_url": "trustpilot_url_or_null"}}"""
+
+            response = _gpt_call("Extract Trustpilot rating. Return ONLY valid JSON.", extract_prompt, 300)
+            tp_data = _parse_json(response)
+            
+            if tp_data and tp_data.get("rating") and tp_data.get("reviews"):
+                log(f"  Trustpilot: {tp_data['rating']}/5 ({tp_data['reviews']} reviews)")
+                return tp_data
+    except Exception as e:
+        log(f"  WARN: Trustpilot re-search failed: {e}")
+    
     return None
 
 
-# --- Main Pipeline ---
+def _validate_and_clean_sources(research, brand_name, domain, pplx_system):
+    """Validate sources, remove blocklisted ones, check for staleness."""
+    
+    # 1. Check and clean blocklisted sources from revenue data
+    financials = research.get("financials", {})
+    latest_rev = financials.get("latest_revenue", {})
+    if latest_rev and _is_blocklisted(latest_rev.get("source_url", "")):
+        log(f"  WARN: Revenue source is blocklisted: {latest_rev.get('source_url', '')}")
+        log(f"  Clearing revenue data and will re-search...")
+        financials["latest_revenue"] = {}
+        # Trigger a gap-fill by clearing
+        research["financials"] = financials
 
-def run_pipeline(brand_name, domain, market, analysis_lens, report_id, output_dir):
-    """Main pipeline v3 entry point."""
-    start_time = time.time()
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(os.path.join(output_dir, "assets"), exist_ok=True)
+    # 2. Check revenue staleness
+    research["financials"] = _check_revenue_staleness(financials, brand_name, pplx_system)
+
+    # 3. Re-search Trustpilot if rating is missing or suspiciously round (might be cached)
+    sentiment = research.get("customer_sentiment", {})
+    tp = sentiment.get("trustpilot", {})
+    needs_tp_research = (
+        not tp or 
+        not tp.get("rating") or 
+        not tp.get("reviews") or
+        tp.get("reviews", 0) < 10  # suspiciously low review count
+    )
+    
+    if needs_tp_research:
+        log(f"  Trustpilot data missing or suspicious — re-searching...")
+        new_tp = _re_search_trustpilot(brand_name, domain, pplx_system)
+        if new_tp:
+            research.setdefault("customer_sentiment", {})["trustpilot"] = new_tp
+
+    # 4. Clean blocklisted URLs from source registry
+    source_registry = research.get("_source_registry", [])
+    cleaned_registry = [s for s in source_registry if not _is_blocklisted(s.get("url", ""))]
+    if len(cleaned_registry) < len(source_registry):
+        removed = len(source_registry) - len(cleaned_registry)
+        log(f"  Removed {removed} blocklisted sources from registry")
+        research["_source_registry"] = cleaned_registry
+
+    return research
+
+
+def _parse_json(text):
+    """Try to parse JSON from GPT response."""
+    if not text:
+        return None
+    text = text.strip()
+    # Remove markdown code blocks if present
+    if text.startswith("```"):
+        lines = text.split("\n")
+        text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
     try:
-        research = run_research(brand_name, domain, market)
-        research_save = {k: v for k, v in research.items() if k != "_raw_findings"}
-        research_path = os.path.join(output_dir, "research.json")
-        with open(research_path, "w") as f:
-            json.dump(research_save, f, indent=2, default=str)
-        log(f"Research saved to {research_path}")
-        report_body = run_report_generation(brand_name, domain, market, research, output_dir)
-        report_path = assemble_full_report(brand_name, domain, market, report_body, output_dir)
-        elapsed = time.time() - start_time
-        log(f"Pipeline complete in {elapsed:.0f}s: {report_path}")
-        return report_path
-    except Exception as e:
-        log(f"Pipeline failed: {e}")
-        traceback.print_exc()
-        raise
+        return json.loads(text)
+    except:
+        return None
+
+
+# ─── Phase 2: Report Generation ───
+
+def run_report(research, brand_name, domain):
+    """Phase 2: Generate structured report sections via GPT."""
+    log("Phase 2: Generating report sections...")
+
+    company = research.get("company", {})
+    financials = research.get("financials", {})
+    competitors = research.get("competitors", {})
+    digital = research.get("digital_marketing", {})
+    sentiment = research.get("customer_sentiment", {})
+    operations = research.get("operations", {})
+    source_registry = research.get("_source_registry", [])
+
+    # Build a flat source map for report generation (id -> url)
+    source_map = {s["id"]: s["url"] for s in source_registry if s.get("id") and s.get("url")}
+    source_map_str = json.dumps(source_map, indent=2)
+
+    report_system = f"""You are a senior investment analyst at a top-tier PE firm writing a due diligence report.
+Today's date: {datetime.now().strftime('%B %d, %Y')}.
+
+WRITING STYLE:
+- Write in professional investment banking language
+- Be specific: include exact numbers, percentages, currencies, and dates
+- Each claim must reference a source using [SOURCE_ID] notation (e.g., [PB-1], [ST-2], [PPLX-D3])
+- Source IDs must match the SOURCE MAP provided
+- Do not fabricate sources — if no source, write "(source not available)"
+- Never use placeholder text like "[X]" or "[Company]"
+
+FORMAT:
+- Use HTML with these exact class names for styling
+- Wrap sections in <div class="section">
+- Use <h2 class="section-title"> for section headers
+- Use <p> for paragraphs, <ul>/<li> for bullet points
+- For citations, use: <a href="SOURCE_URL" class="citation" target="_blank">[SOURCE_ID]</a>
+- SOURCE_URL must come from the SOURCE MAP — look up the id to find the url
+- Never output raw [SOURCE_ID] without converting to an <a> tag with the URL"""
+
+    # BATCH 1: Company Overview + Financials
+    batch1_prompt = f"""Write the first two sections of a PE due diligence report for {brand_name} ({domain}).
+
+SOURCE MAP (source_id -> url):
+{source_map_str}
+
+DATA:
+{json.dumps({'company': company, 'financials': financials}, indent=2)}
+
+Write these sections:
+
+1. COMPANY OVERVIEW
+Include: founding story (city where founded), current HQ, founders and backgrounds, business model, product categories, price positioning, key markets, brand positioning, employee count, unique selling points.
+
+2. FINANCIAL PERFORMANCE
+Include: revenue history table (3+ years), latest revenue with YoY growth, gross margin, EBITDA, funding history with investors and valuations, revenue channel breakdown (DTC vs wholesale), geographic revenue split.
+
+For each specific data point, add a citation link: <a href="SOURCE_URL" class="citation" target="_blank">[SOURCE_ID]</a>
+Look up SOURCE_URL from the SOURCE MAP using the source_id."""
+
+    # BATCH 2: Digital + Competitive
+    batch2_prompt = f"""Write two more sections of a PE due diligence report for {brand_name} ({domain}).
+
+SOURCE MAP (source_id -> url):
+{source_map_str}
+
+DATA:
+{json.dumps({'digital_marketing': digital, 'customer_sentiment': sentiment, 'competitors': competitors}, indent=2)}
+
+Write these sections:
+
+3. DIGITAL PRESENCE & MARKETING
+Include: website traffic (monthly visits, trend, top channels with percentages), top countries, mobile percentage, social media followers for each platform (Instagram, TikTok, Facebook, YouTube, Twitter), tech stack.
+
+4. CUSTOMER SENTIMENT & REPUTATION
+Include: Trustpilot rating and review count (with direct link), praise themes (with example quotes), complaint themes (with example quotes), Google reviews if available.
+
+5. COMPETITIVE LANDSCAPE
+Include: 6-8 direct competitors table with revenue, price range, differentiator, market position. Market size (TAM/SAM/SOM) with CAGR. Recent M&A comparables with deal values and EV/Revenue multiples.
+
+For each specific data point, add a citation link using the SOURCE MAP."""
+
+    # BATCH 3: Operations + Investment Thesis
+    batch3_prompt = f"""Write the final sections of a PE due diligence report for {brand_name} ({domain}).
+
+SOURCE MAP (source_id -> url):
+{source_map_str}
+
+DATA:
+{json.dumps({'operations': operations, 'financials': financials, 'competitors': competitors, 'company': company}, indent=2)}
+
+Write these sections:
+
+6. OPERATIONS & SUPPLY CHAIN
+Include: manufacturing model (own factory vs contract), manufacturing countries, logistics and fulfillment model, key supply chain risks.
+
+7. INVESTMENT THESIS & KEY RISKS
+Include: 
+- Bull case (3-4 points): Why this is an attractive acquisition target
+- Bear case / key risks (3-4 points): Key risks and challenges
+- EV/Revenue valuation range based on M&A comparables and growth profile
+- Suggested due diligence priorities
+
+For each specific data point, add a citation link using the SOURCE MAP."""
+
+    report_sections = {}
+    
+    def do_batch(name, prompt):
+        log(f"  Batch {name}...")
+        html = _gpt_call(report_system, prompt, 6000)
+        log(f"  Batch {name}: {len(html)} chars")
+        return name, html
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [
+            executor.submit(do_batch, "1", batch1_prompt),
+            executor.submit(do_batch, "2", batch2_prompt),
+            executor.submit(do_batch, "3", batch3_prompt),
+        ]
+        for future in as_completed(futures):
+            try:
+                name, html = future.result()
+                report_sections[name] = html
+            except Exception as e:
+                log(f"  ERROR in batch: {e}")
+                traceback.print_exc()
+
+    return report_sections
+
+
+# ─── Phase 3: HTML Assembly ───
+
+def assemble_html(report_sections, brand_name, research):
+    """Phase 3: Assemble final HTML report."""
+    log("Phase 3: Assembling HTML report...")
+
+    company = research.get("company", {})
+    financials = research.get("financials", {})
+    latest_rev = financials.get("latest_revenue", {})
+
+    # Format header info
+    hq = company.get("current_headquarters") or company.get("founded_city") or "Unknown"
+    founded = company.get("founded_year", "N/A")
+    employees_obj = company.get("employee_count", {})
+    employees = employees_obj.get("value", "N/A") if isinstance(employees_obj, dict) else employees_obj
+    revenue_str = latest_rev.get("amount", "N/A")
+    revenue_year = latest_rev.get("year", "")
+    if revenue_year:
+        revenue_str = f"{revenue_str} (FY{str(revenue_year)[-2:]})"
+
+    today = datetime.now().strftime("%B %d, %Y")
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BlazingHill Due Diligence Report: {brand_name}</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'Georgia', 'Times New Roman', serif;
+            font-size: 14px;
+            line-height: 1.7;
+            color: #1a1a1a;
+            background: #f8f7f4;
+        }}
+        .cover {{
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
+            color: white;
+            padding: 80px 60px;
+            min-height: 300px;
+            position: relative;
+            overflow: hidden;
+        }}
+        .cover::before {{
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -20%;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(255,165,0,0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }}
+        .cover-brand {{
+            font-size: 42px;
+            font-weight: 700;
+            letter-spacing: -1px;
+            margin-bottom: 8px;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+        }}
+        .cover-subtitle {{
+            font-size: 16px;
+            color: rgba(255,255,255,0.6);
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 40px;
+        }}
+        .cover-meta {{
+            display: flex;
+            gap: 60px;
+            margin-top: 40px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding-top: 30px;
+        }}
+        .cover-meta-item {{
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }}
+        .cover-meta-label {{
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: rgba(255,165,0,0.8);
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+        }}
+        .cover-meta-value {{
+            font-size: 16px;
+            font-weight: 600;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+        }}
+        .blazinghill-logo {{
+            position: absolute;
+            top: 40px;
+            right: 60px;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: rgba(255,165,0,0.9);
+        }}
+        .container {{
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 40px 60px;
+        }}
+        .section {{
+            background: white;
+            border-radius: 2px;
+            margin: 24px 0;
+            padding: 40px 48px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            border-left: 3px solid transparent;
+        }}
+        .section:hover {{
+            border-left-color: #e8a020;
+        }}
+        .section-title {{
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 20px;
+            font-weight: 700;
+            color: #0a0a0a;
+            margin-bottom: 24px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #f0ede8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+        h3 {{
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            color: #333;
+            margin: 20px 0 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+        p {{
+            margin: 12px 0;
+            color: #2a2a2a;
+        }}
+        ul, ol {{
+            margin: 12px 0 12px 24px;
+        }}
+        li {{
+            margin: 6px 0;
+            color: #2a2a2a;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 13px;
+        }}
+        th {{
+            background: #0a0a0a;
+            color: white;
+            padding: 10px 14px;
+            text-align: left;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 11px;
+        }}
+        td {{
+            padding: 9px 14px;
+            border-bottom: 1px solid #f0ede8;
+            vertical-align: top;
+        }}
+        tr:nth-child(even) td {{
+            background: #fafaf8;
+        }}
+        tr:hover td {{
+            background: #fff8ee;
+        }}
+        .citation {{
+            display: inline-block;
+            background: #fff8ee;
+            border: 1px solid #e8c87a;
+            color: #8b6914;
+            padding: 0px 5px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-weight: 600;
+            text-decoration: none;
+            margin: 0 1px;
+            vertical-align: middle;
+        }}
+        .citation:hover {{
+            background: #e8c87a;
+            color: #000;
+        }}
+        .metric-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 16px;
+            margin: 20px 0;
+        }}
+        .metric-card {{
+            background: #fafaf8;
+            border: 1px solid #f0ede8;
+            border-radius: 4px;
+            padding: 16px 20px;
+        }}
+        .metric-label {{
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #888;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            margin-bottom: 4px;
+        }}
+        .metric-value {{
+            font-size: 22px;
+            font-weight: 700;
+            color: #0a0a0a;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+        }}
+        .tag {{
+            display: inline-block;
+            background: #f0ede8;
+            color: #555;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            margin: 2px;
+        }}
+        .highlight {{
+            background: linear-gradient(135deg, #fff8ee, #fff3d6);
+            border: 1px solid #e8c87a;
+            border-radius: 4px;
+            padding: 16px 20px;
+            margin: 16px 0;
+        }}
+        .footer {{
+            text-align: center;
+            padding: 40px;
+            color: #999;
+            font-size: 11px;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            border-top: 1px solid #f0ede8;
+            margin-top: 40px;
+        }}
+        @media print {{
+            body {{ background: white; }}
+            .section {{
+                box-shadow: none;
+                border: 1px solid #eee;
+                break-inside: avoid;
+            }}
+        }}
+    </style>
+</head>
+<body>
+<div class="cover">
+    <div class="blazinghill-logo">BlazingHill Capital</div>
+    <div class="cover-brand">{brand_name}</div>
+    <div class="cover-subtitle">Private Equity Due Diligence Report</div>
+    <div class="cover-meta">
+        <div class="cover-meta-item">
+            <span class="cover-meta-label">Report Date</span>
+            <span class="cover-meta-value">{today}</span>
+        </div>
+        <div class="cover-meta-item">
+            <span class="cover-meta-label">Headquarters</span>
+            <span class="cover-meta-value">{hq}</span>
+        </div>
+        <div class="cover-meta-item">
+            <span class="cover-meta-label">Founded</span>
+            <span class="cover-meta-value">{founded}</span>
+        </div>
+        <div class="cover-meta-item">
+            <span class="cover-meta-label">Employees</span>
+            <span class="cover-meta-value">{employees:,} if isinstance(employees, int) else {employees}</span>
+        </div>
+        <div class="cover-meta-item">
+            <span class="cover-meta-label">Revenue</span>
+            <span class="cover-meta-value">{revenue_str}</span>
+        </div>
+    </div>
+</div>
+<div class="container">
+"""
+
+    # Add sections in order
+    for i in ["1", "2", "3"]:
+        if i in report_sections:
+            html += report_sections[i]
+
+    html += f"""
+</div>
+<div class="footer">
+    <strong>BlazingHill Capital</strong> — Confidential Due Diligence Report — {today}<br>
+    This report was prepared using proprietary data sources including PitchBook, CB Insights, Statista, and AI-powered research.
+    All figures should be independently verified prior to making investment decisions.
+</div>
+</body>
+</html>"""
+
+    return html
+
+
+# ─── Main Entry Point ───
+
+def main(brand_name, domain, market, report_id=None, output_dir="."):
+    """Full pipeline: research → report → HTML."""
+    log(f"BlazingHill Report Engine v3 — Starting for: {brand_name} ({domain})")
+    log(f"Market: {market}")
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    report_id = report_id or f"{brand_name.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    # Phase 1: Research
+    t0 = time.time()
+    research = run_research(brand_name, domain, market)
+    t1 = time.time()
+    log(f"Phase 1 complete in {t1-t0:.1f}s")
+
+    # Save research JSON
+    research_path = output_dir / f"{report_id}_research.json"
+    with open(research_path, "w") as f:
+        json.dump(research, f, indent=2)
+    log(f"Research saved: {research_path}")
+
+    # Phase 2: Report generation
+    report_sections = run_report(research, brand_name, domain)
+    t2 = time.time()
+    log(f"Phase 2 complete in {t2-t1:.1f}s")
+
+    # Phase 3: HTML assembly
+    html = assemble_html(report_sections, brand_name, research)
+    t3 = time.time()
+    log(f"Phase 3 complete in {t3-t2:.1f}s")
+
+    # Save HTML
+    html_path = output_dir / f"{report_id}_report.html"
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    log(f"Report saved: {html_path}")
+    log(f"Total time: {t3-t0:.1f}s")
+
+    return str(html_path), str(research_path)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="BlazingHill Report Engine v3")
-    parser.add_argument("--brand", required=True)
-    parser.add_argument("--domain", required=True)
-    parser.add_argument("--market", default="United States")
-    parser.add_argument("--lens", default="Commercial diligence")
-    parser.add_argument("--report-id", required=True)
-    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("brand_name", help="Brand name (e.g., 'Gym Shark')")
+    parser.add_argument("domain", help="Domain (e.g., 'gymshark.com')")
+    parser.add_argument("market", help="Market category (e.g., 'athletic apparel DTC')")
+    parser.add_argument("--report-id", help="Optional report ID")
+    parser.add_argument("--output-dir", default=".", help="Output directory")
     args = parser.parse_args()
-    run_pipeline(args.brand, args.domain, args.market, args.lens, args.report_id, args.output_dir)
+    main(args.brand_name, args.domain, args.market, args.report_id, args.output_dir)
