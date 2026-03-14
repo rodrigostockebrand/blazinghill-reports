@@ -4,6 +4,8 @@ BlazingHill Report Engine v3.2 — Research Module
 Phase 1: Data collection from premium + Perplexity sources.
 """
 from pipeline_utils import *
+from pipeline_validation import _parse_json, _validate_and_clean_sources
+
 def run_research(brand_name, domain, market):
     """Phase 1: Collect data from premium sources + Perplexity, then structure."""
     today = datetime.now().strftime("%B %d, %Y")
