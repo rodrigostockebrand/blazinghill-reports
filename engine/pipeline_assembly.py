@@ -1202,10 +1202,22 @@ if (typeof ChartDataLabels !== 'undefined') {{
     var rawConfig = container.getAttribute('data-chart');
     if (!rawConfig) return;
 
-    // Parse JSON config
+    // Parse JSON config with auto-repair for unbalanced braces
     var config;
     try {{
-      config = JSON.parse(rawConfig);
+      // GPT sometimes outputs JSON missing 1-2 closing braces — repair before parsing
+      var fixed = rawConfig;
+      var opens = (fixed.match(/\{{/g) || []).length;
+      var closes = (fixed.match(/\}}/g) || []).length;
+      if (opens > closes) {{
+        fixed += '}}'.repeat(opens - closes);
+      }}
+      var openBrackets = (fixed.match(/\[/g) || []).length;
+      var closeBrackets = (fixed.match(/\]/g) || []).length;
+      if (openBrackets > closeBrackets) {{
+        fixed += ']'.repeat(openBrackets - closeBrackets);
+      }}
+      config = JSON.parse(fixed);
     }} catch(e) {{
       console.warn('Chart ' + chartIndex + ': invalid JSON —', e.message, rawConfig.substring(0, 100));
       container.innerHTML = '<div style="padding:16px;color:var(--gray-400);font-size:13px;">'

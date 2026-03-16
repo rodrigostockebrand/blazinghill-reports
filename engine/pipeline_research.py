@@ -22,6 +22,8 @@ def run_research(brand_name, domain, market):
         "pitchbook": [],
         "cbinsights": [],
         "statista": [],
+        "verified_financials": [],
+        "verified_sentiment": [],
     }
 
     # Also check for pre-enriched data file (from agent-assisted runs)
@@ -34,7 +36,12 @@ def run_research(brand_name, domain, market):
             premium_data["pitchbook"] = pre_enriched.get("pitchbook", [])
             premium_data["cbinsights"] = pre_enriched.get("cbinsights", [])
             premium_data["statista"] = pre_enriched.get("statista", [])
-            log(f"  Loaded: PB={len(premium_data['pitchbook'])}, CB={len(premium_data['cbinsights'])}, ST={len(premium_data['statista'])}")
+            # Also load verified financials and sentiment if present
+            premium_data["verified_financials"] = pre_enriched.get("verified_financials", [])
+            premium_data["verified_sentiment"] = pre_enriched.get("verified_sentiment", [])
+            vf = len(premium_data.get('verified_financials', []))
+            vs = len(premium_data.get('verified_sentiment', []))
+            log(f"  Loaded: PB={len(premium_data['pitchbook'])}, CB={len(premium_data['cbinsights'])}, ST={len(premium_data['statista'])}, VF={vf}, VS={vs}")
         except Exception as e:
             log(f"  WARN: Failed to load pre-enriched data: {e}")
 
@@ -224,6 +231,30 @@ For each fact, include the source URL in parentheses. Prefer industry research r
                 "url": item["source_url"],
                 "publisher": "CB Insights",
                 "type": "premium",
+            })
+
+    if premium_data.get("verified_financials"):
+        premium_summary += "\n\n=== VERIFIED FINANCIAL DATA (HIGHEST PRIORITY — use for revenue, EBITDA, margins, PBT) ===\n"
+        for i, item in enumerate(premium_data["verified_financials"]):
+            premium_summary += f"\n[VF-{i+1}] {item['title']}\n{item['content']}\nSource URL: {item['source_url']}\n"
+            source_registry.append({
+                "id": f"VF-{i+1}",
+                "name": f"{item.get('source_name', 'Verified')}: {item['title']}",
+                "url": item["source_url"],
+                "publisher": item.get("publisher", "Verified Source"),
+                "type": "verified",
+            })
+
+    if premium_data.get("verified_sentiment"):
+        premium_summary += "\n\n=== VERIFIED SENTIMENT DATA (use for Trustpilot, NPS, customer reviews) ===\n"
+        for i, item in enumerate(premium_data["verified_sentiment"]):
+            premium_summary += f"\n[VS-{i+1}] {item['title']}\n{item['content']}\nSource URL: {item['source_url']}\n"
+            source_registry.append({
+                "id": f"VS-{i+1}",
+                "name": f"{item.get('source_name', 'Verified')}: {item['title']}",
+                "url": item["source_url"],
+                "publisher": item.get("publisher", "Verified Source"),
+                "type": "verified",
             })
 
     # Build Perplexity findings with SEPARATE citation lists per call
