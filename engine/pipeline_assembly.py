@@ -120,7 +120,7 @@ def assemble_html(brand_name, domain, batches, research, report_id):
             src_type = src.get("type", "web")
             tag_class = "opp" if src_type == "premium" else "watch"
             if url:
-                url_display = url[:70] + ("…" if len(url) > 70 else "")
+                url_display = url[:70] + ("\u2026" if len(url) > 70 else "")
                 rows.append(
                     f'<tr><td><code>{src["id"]}</code></td>'
                     f'<td>{name}</td>'
@@ -192,8 +192,9 @@ def assemble_html(brand_name, domain, batches, research, report_id):
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <!-- Chart.js 4.x -->
+  <!-- Chart.js 4.x + Datalabels Plugin -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
   <style>
 /* ═══════════════════════════════════════════════════════
    Meller Brand PE DD Report — McKinsey-Grade Stylesheet
@@ -1186,6 +1187,11 @@ document.querySelectorAll('.exhibit img').forEach(function(img) {{
   }});
 }});
 
+// ── Register Chart.js Datalabels Plugin ───────────────
+if (typeof ChartDataLabels !== 'undefined') {{
+  Chart.register(ChartDataLabels);
+}}
+
 // ── Chart.js Auto-initialization ──────────────────────
 (function() {{
   var chartContainers = document.querySelectorAll('.chart-container[data-chart]');
@@ -1224,25 +1230,90 @@ document.querySelectorAll('.exhibit img').forEach(function(img) {{
     // Enforce legend display
     if (!config.options.plugins) config.options.plugins = {{}};
     if (!config.options.plugins.legend) {{
-      config.options.plugins.legend = {{ position: 'bottom', labels: {{ font: {{ size: 11 }} }} }};
+      config.options.plugins.legend = {{ position: 'bottom', labels: {{ font: {{ size: 12 }} }} }};
+    }}
+
+    // ── DATALABELS: Show values on every chart ──
+    var chartType = config.type || 'bar';
+    if (!config.options.plugins.datalabels) {{
+      if (chartType === 'doughnut' || chartType === 'pie' || chartType === 'polarArea') {{
+        // Show percentages on slices
+        config.options.plugins.datalabels = {{
+          color: '#fff',
+          font: {{ weight: 'bold', size: 12 }},
+          formatter: function(value, ctx) {{
+            var total = ctx.dataset.data.reduce(function(a, b) {{ return a + b; }}, 0);
+            var pct = Math.round((value / total) * 100);
+            return pct > 3 ? pct + '%' : '';
+          }}
+        }};
+      }} else if (chartType === 'radar') {{
+        config.options.plugins.datalabels = {{ display: false }};
+      }} else {{
+        // Bar, line, scatter: show values above points/bars
+        config.options.plugins.datalabels = {{
+          anchor: 'end',
+          align: 'top',
+          color: '#374151',
+          font: {{ weight: '600', size: 11 }},
+          formatter: function(value) {{
+            if (typeof value === 'number') {{
+              if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+              if (value >= 1000) return (value / 1000).toFixed(0) + 'K';
+              if (value % 1 !== 0) return value.toFixed(1);
+            }}
+            return value;
+          }}
+        }};
+      }}
+    }}
+
+    // ── AXIS TITLES: Enforce on bar and line charts ──
+    if (chartType === 'bar' || chartType === 'line') {{
+      if (!config.options.scales) config.options.scales = {{}};
+      // X axis
+      if (!config.options.scales.x) config.options.scales.x = {{}};
+      if (!config.options.scales.x.title) {{
+        config.options.scales.x.title = {{ display: true, text: '', font: {{ size: 12, weight: '600' }}, color: '#6b7280' }};
+      }} else {{
+        config.options.scales.x.title.display = true;
+        if (!config.options.scales.x.title.font) config.options.scales.x.title.font = {{ size: 12, weight: '600' }};
+      }}
+      // Y axis
+      if (!config.options.scales.y) config.options.scales.y = {{}};
+      if (!config.options.scales.y.title) {{
+        config.options.scales.y.title = {{ display: true, text: '', font: {{ size: 12, weight: '600' }}, color: '#6b7280' }};
+      }} else {{
+        config.options.scales.y.title.display = true;
+        if (!config.options.scales.y.title.font) config.options.scales.y.title.font = {{ size: 12, weight: '600' }};
+      }}
+      // Ensure gridlines are subtle
+      if (!config.options.scales.x.grid) config.options.scales.x.grid = {{ display: false }};
+      if (!config.options.scales.y.grid) config.options.scales.y.grid = {{ color: '#f3f4f6' }};
+      // Begin at zero for bar charts
+      if (chartType === 'bar') config.options.scales.y.beginAtZero = true;
     }}
 
     // Default color palette if datasets have no colors
     var palette = ['#2563eb','#16a34a','#d97706','#dc2626','#7c3aed','#06b6d4','#ec4899'];
-    var paletteAlpha = ['#2563eb33','#16a34a33','#d9770633','#dc262633','#7c3aed33','#06b6d433','#ec489933'];
+    var paletteAlpha = ['#2563eb80','#16a34a80','#d9770680','#dc262680','#7c3aed80','#06b6d480','#ec489980'];
 
     if (config.data && config.data.datasets) {{
       config.data.datasets.forEach(function(ds, idx) {{
         var c = palette[idx % palette.length];
         var ca = paletteAlpha[idx % paletteAlpha.length];
-        var chartType = config.type;
         if (!ds.backgroundColor) {{
           if (chartType === 'line') {{
             ds.backgroundColor = ca;
           }} else if (chartType === 'doughnut' || chartType === 'pie' || chartType === 'polarArea') {{
             ds.backgroundColor = palette.slice(0, (ds.data || []).length);
           }} else {{
-            ds.backgroundColor = c;
+            // Give each bar a unique color for single-dataset bar charts
+            if (config.data.datasets.length === 1 && ds.data) {{
+              ds.backgroundColor = ds.data.map(function(_, i) {{ return palette[i % palette.length]; }});
+            }} else {{
+              ds.backgroundColor = c;
+            }}
           }}
         }}
         if (!ds.borderColor && chartType === 'line') {{
@@ -1250,7 +1321,12 @@ document.querySelectorAll('.exhibit img').forEach(function(img) {{
           ds.borderWidth = ds.borderWidth || 2;
           ds.tension = ds.tension !== undefined ? ds.tension : 0.35;
           ds.fill = ds.fill !== undefined ? ds.fill : false;
-          ds.pointRadius = ds.pointRadius !== undefined ? ds.pointRadius : 3;
+          ds.pointRadius = ds.pointRadius !== undefined ? ds.pointRadius : 4;
+        }}
+        // For doughnut/pie, add white borders between slices
+        if ((chartType === 'doughnut' || chartType === 'pie') && !ds.borderColor) {{
+          ds.borderColor = '#ffffff';
+          ds.borderWidth = 2;
         }}
       }});
     }}
