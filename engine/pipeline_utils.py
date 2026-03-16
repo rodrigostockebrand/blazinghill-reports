@@ -92,31 +92,40 @@ def _extract_premium_data(results, source_name):
 
 # ─── Perplexity API ───
 
-def _perplexity_call(system_msg, user_msg, max_tokens=4000):
-    """Make a Perplexity API call. Returns (content, citations_list)."""
-    resp = requests.post(
-        "https://api.perplexity.ai/chat/completions",
-        headers={
-            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": "sonar-pro",
-            "messages": [
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ],
-            "max_tokens": max_tokens,
-            "temperature": 0.1,
-            "return_citations": True,
-        },
-        timeout=180,
-    )
+def _perplexity_call(system_msg, user_msg, max_tokens=4000, max_retries=4):
+    """Make a Perplexity API call with retry logic. Returns (content, citations_list)."""
+    import time as _time
+    for attempt in range(max_retries):
+        resp = requests.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers={
+                "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "sonar-pro",
+                "messages": [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ],
+                "max_tokens": max_tokens,
+                "temperature": 0.1,
+                "return_citations": True,
+            },
+            timeout=180,
+        )
+        if resp.status_code == 429:
+            wait = max(int(resp.headers.get("Retry-After", 0)), (2 ** attempt) * 10)
+            log(f"  [Perplexity] Rate limited (429). Retry {attempt+1}/{max_retries} in {wait}s...")
+            _time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        citations = data.get("citations", [])
+        return content, citations
     resp.raise_for_status()
-    data = resp.json()
-    content = data["choices"][0]["message"]["content"]
-    citations = data.get("citations", [])
-    return content, citations
+    return "", []
 
 
 def _perplexity_call_with_sources(system_msg, user_msg, call_name, max_tokens=4000):
@@ -143,25 +152,38 @@ def _perplexity_call_with_sources(system_msg, user_msg, call_name, max_tokens=40
 
 # ─── GPT API ───
 
-def _gpt_call(system_msg, user_msg, max_tokens=4000):
-    """Make a GPT API call."""
-    resp = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": "gpt-4.1",
-            "messages": [
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ],
-            "max_tokens": max_tokens,
-            "temperature": 0.0,
-        },
-        timeout=120,
-    )
+def _gpt_call(system_msg, user_msg, max_tokens=4000, max_retries=5):
+    """Make a GPT API call with exponential backoff for rate limits."""
+    import time as _time
+    for attempt in range(max_retries):
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4.1",
+                "messages": [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ],
+                "max_tokens": max_tokens,
+                "temperature": 0.0,
+            },
+            timeout=180,
+        )
+        if resp.status_code == 429:
+            # Rate limited — exponential backoff
+            retry_after = int(resp.headers.get("Retry-After", 0))
+            wait = max(retry_after, (2 ** attempt) * 10)  # 10s, 20s, 40s, 80s, 160s
+            log(f"  [GPT] Rate limited (429). Retry {attempt+1}/{max_retries} in {wait}s...")
+            _time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+    # Final attempt without catching
     resp.raise_for_status()
     data = resp.json()
     return data["choices"][0]["message"]["content"]
