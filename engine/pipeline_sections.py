@@ -485,19 +485,10 @@ def _get_section_instructions(sid, num, title):
 - A sources table with all referenced URLs""",
     }
 
-    default = f"Write the {title} section with relevant analysis, stat-rows, callouts, and one Chart.js chart."
-    return f"""--- SECTION {sid.upper()} ({num}): {title} ---
-{instructions.get(sid, default)}
-
-HTML structure required:
-<section class="section" id="{sid}">
-  <div class="section-label">Section {num}</div>
-  <h2>{title}</h2>
-  <p class="section-intro">Brief intro paragraph...</p>
-  <!-- prose content using .stat-row, .callout, .kpi-grid, .table-wrap, .two-col, .scenarios -->
-  <div class="chart-container" data-chart='VALID_CHART_JS_4X_JSON'></div>
-  <figcaption>Exhibit {num}: [chart title] | Sources: <a href="URL" target="_blank">Source Name</a></figcaption>
-</section>"""
+    default = f"Write section {num}: {title} with relevant analysis, data, and charts. Only use data from the RESEARCH DATA provided. If specific metrics are unavailable, provide qualitative strategic analysis instead of fabricated numbers."
+    base = instructions.get(sid, default)
+    preamble = "REMINDER: Only include data that exists in the RESEARCH DATA. If a requested metric is not available, replace it with qualitative analysis and a disclosure callout. NEVER fabricate numbers."
+    return f"{preamble}\n\n{base}"
 
 
 # ─── Main Function ─────────────────────────────────────────────────────────────
@@ -542,51 +533,90 @@ def run_report_generation(research, brand_name, domain, report_id):
     gpt_system = f"""You are a McKinsey-grade PE due diligence analyst writing an institutional-quality report.
 The target company is {brand_name} ({domain}).
 
-CITATION FORMAT: Every factual claim MUST include a source link. Use this format:
-<a href="ACTUAL_URL" target="_blank" class="cite">Source Name</a>
+═══════════════════════════════════════════════════════════════════════════════
+                    ABSOLUTE DATA INTEGRITY RULES
+═══════════════════════════════════════════════════════════════════════════════
 
-If you only have a source ID (e.g. PB-1, ST-2, PPLX-D3), look up the URL in the AVAILABLE SOURCES list below and use that URL.
-Never write [Source: ID] — always use a real <a href> tag.
-If you have no URL for a claim, write: <span class="no-source">(source not available)</span>
+RULE 1 — ZERO FABRICATION: NEVER invent, estimate, or fabricate ANY number, metric,
+percentage, or data point — even if marked "(est.)". If the data is not in the
+RESEARCH DATA provided below, DO NOT include it. This report is used for million-dollar
+investment decisions. Fabricated data will jeopardize the entire deal.
+
+RULE 2 — SOURCE-OR-OMIT: Every specific number MUST have a clickable source tag:
+  <a href="ACTUAL_URL" target="_blank" class="cite">Source Name</a>
+If you cannot provide a real URL for a claim, DO NOT include the claim at all.
+NEVER write "(source not available)" or "(est.)" next to a number — instead, replace
+the entire data point with:
+  <div class="callout info"><span class="callout-icon">ℹ</span>
+    <div><strong>Not publicly disclosed.</strong> [Metric name] is not available in
+    current sources. Recommend requesting directly from management during DD Q&A.</div>
+  </div>
+
+RULE 3 — NO PLACEHOLDER TABLES: Do NOT create tables with fabricated rows. If you
+only have 2 real data points, show a 2-row table — not a 10-row table with 8
+fabricated rows. Empty sections with honest disclosure are infinitely more valuable
+than sections full of made-up numbers.
+
+RULE 4 — QUALITATIVE OVER FAKE QUANTITATIVE: When data is unavailable, provide
+qualitative strategic analysis instead. A thoughtful paragraph about Gymshark's
+pricing power based on brand positioning is more valuable than a fabricated
+price-elasticity table.
+
+═══════════════════════════════════════════════════════════════════════════════
+
+CITATION FORMAT: Use <a href="URL" target="_blank" class="cite">Source Name</a>
+Look up source IDs in the AVAILABLE SOURCES list and use the real URL.
 
 AVAILABLE SOURCES:
 {source_map}
 
-CHART FORMAT: For every chart, output a div with the Chart.js 4.x config as a JSON attribute:
-<div class="chart-container" data-chart='VALID_JSON_CONFIG'></div>
+CHART FORMAT: Only create a chart when you have REAL data to chart.
+Output: <div class="chart-container" data-chart='VALID_JSON_CONFIG'></div>
+Then: <figcaption>Exhibit NN: [title] | Sources: <a href="URL">Source</a></figcaption>
 
-Rules for chart JSON:
-- Must be valid JSON (double-quote all keys and string values, use only numeric values for data)
-- Chart types allowed: bar, line, doughnut, radar, scatter, bubble, polarArea
-- Always include: type, data (labels + datasets), options (responsive:true, plugins.legend)
+Chart JSON rules:
+- Must be valid JSON (double-quote all keys and string values, only numeric data values)
+- Types allowed: bar, line, doughnut, radar, scatter, bubble, polarArea
+- Always include: type, data (labels + datasets), options
+- options MUST include:
+  * responsive: true
+  * plugins.legend with display:true
+  * plugins.datalabels with display:true (show values on bars/slices)
+  * scales (for bar/line): x-axis and y-axis titles via scaleLabel/title
 - Color palette: ["#2563eb","#16a34a","#d97706","#dc2626","#7c3aed","#06b6d4","#ec4899"]
-- Background colors should be hex with alpha: e.g. "#2563eb40" for 25% opacity
-- For waterfall/bridge charts use bar type with stacked:true
-- NEVER use JavaScript expressions inside the JSON — only literal values
+- Background colors: hex with alpha e.g. "#2563eb80" for 50% opacity
+- EVERY axis must have a title label (e.g., "Revenue (£M)", "EV/Revenue Multiple (x)")
+- EVERY bar/point should have a data label visible
+- NEVER use JavaScript expressions inside JSON — only literal values
+- If you do NOT have real sourced data for a chart, do NOT include the chart.
+  Instead write: <div class="callout info"><span class="callout-icon">📊</span>
+    <div><strong>Chart omitted — insufficient sourced data.</strong>
+    This visualization requires [specific data] which is not publicly available.</div>
+  </div>
 
-HTML FORMAT: Use these CSS classes:
-- .stat-row with children: .stat-label, .stat-value, .stat-note
-- .callout.success or .callout.warn or .callout.info or .callout.danger with .callout-icon span
+HTML FORMAT classes:
+- .stat-row > .stat-label, .stat-value, .stat-note
+- .callout.success/.warn/.info/.danger with .callout-icon span
 - .two-col for side-by-side layouts
-- .scenario-card.bear, .scenario-card.base, .scenario-card.bull (inside .scenarios div)
+- .scenario-card.bear/.base/.bull inside .scenarios div
 - .table-wrap > table with thead/tbody
 - .tag.tag-opp (green), .tag.tag-watch (amber), .tag.tag-risk (red)
-- .kpi-grid with .kpi-card.kpi-blue/.kpi-green/.kpi-amber/.kpi-red/.kpi-navy
-- .metric-bar with .mb-label, .mb-track, .mb-fill
+- .kpi-grid > .kpi-card.kpi-blue/.kpi-green/.kpi-amber/.kpi-red/.kpi-navy
+- .metric-bar > .mb-label, .mb-track, .mb-fill
 - .key-insight for highlighted analysis
-- .thesis-box for investment thesis statements
+- .thesis-box for investment thesis
 
-CRITICAL RULES:
-1. Every numeric claim MUST have a real source <a> tag.
-2. If you don't have a specific data point, write: <em>Data not available from current sources.</em>
-3. Never fabricate revenue, employee, or valuation figures.
-4. Never fabricate URLs — if the URL is unknown, omit the href and note "(source not available)".
-5. Use the EXACT section IDs provided (s01-s51).
-6. Always include at least one <div class="chart-container" data-chart='...'> per section.
-7. Chart JSON must be single-line-valid inside the data-chart attribute (escape any single quotes as &#39;).
-8. Write substantive analysis — minimum 400 words per section.
-9. Include actual numbers from the research context where available.
-10. Produce clean HTML only — no markdown, no code fences, no explanations outside the HTML."""
+CRITICAL OUTPUT RULES:
+1. Every number MUST have a real <a href> source — no exceptions.
+2. If data is unavailable, provide qualitative analysis + disclosure callout.
+3. NEVER fabricate revenue, margin, employee, retention, AOV, CAC, LTV, or valuation figures.
+4. NEVER fabricate URLs — if unknown, omit the claim entirely.
+5. Use exact section IDs provided (s01-s51).
+6. Only include a chart when you have real sourced data for it.
+7. Chart JSON must be valid single-line JSON in the data-chart attribute.
+8. Write substantive analysis — minimum 400 words per section, prioritizing qualitative insight.
+9. Include actual numbers from the RESEARCH DATA only.
+10. Output clean HTML only — no markdown, no code fences, no explanations."""
 
     # ── Per-batch generation function ─────────────────────────────────────────
     def generate_batch(batch_num, section_ids):
@@ -597,19 +627,20 @@ CRITICAL RULES:
 
         batch_user = f"""Write the following sections of the {brand_name} PE Due Diligence Report.
 
-RESEARCH DATA (use this as your primary data source):
+RESEARCH DATA (this is your ONLY source of facts — do NOT invent data beyond this):
 {research_context}
 
 SECTIONS TO WRITE:
 {section_prompts}
 
-IMPORTANT:
+ABSOLUTE REQUIREMENTS:
 - Write ALL sections listed above, in order.
-- Each section must start with <section class="section" id="sXX"> and end with </section>.
-- Include the required HTML components for each section as specified.
-- Every chart must use real data from the research context above.
-- If data is not available, use reasonable industry benchmarks and mark them as estimated.
-- Output ONLY the HTML — no preamble, no explanation, no markdown."""
+- Each section: <section class="section" id="sXX"> ... </section>
+- If the RESEARCH DATA above does not contain a specific metric, DO NOT fabricate it.
+  Instead provide qualitative strategic analysis and a disclosure callout.
+- Only create charts when you have REAL data points from the RESEARCH DATA.
+- NEVER create tables with fabricated rows — only include rows backed by real data.
+- Output ONLY HTML — no preamble, no explanation, no markdown."""
 
         try:
             html = _gpt_call(gpt_system, batch_user, max_tokens=32000)
@@ -726,3 +757,5 @@ _NAV_SECTIONS = [
     ("s50", "50", "AI Readiness"),
     ("s51", "51", "Appendix"),
 ]
+
+
