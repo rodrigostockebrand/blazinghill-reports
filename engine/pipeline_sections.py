@@ -684,11 +684,11 @@ ABSOLUTE REQUIREMENTS:
 </section>\n"""
             return batch_num, fallback
 
-    # ── Wave 1: Batches 1-5 in parallel ──────────────────────────────────────
+    # ── Wave 1: Batches 1-5 (2 concurrent to avoid rate limits) ──────────────
     log("Phase 2 — Wave 1: Batches 1-5...")
     wave1_results = {}
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures = {
             executor.submit(generate_batch, i + 1, BATCHES[i]): i + 1
             for i in range(5)
@@ -697,11 +697,15 @@ ABSOLUTE REQUIREMENTS:
             batch_num, html = future.result()
             wave1_results[batch_num] = html
 
-    # ── Wave 2: Batches 6-10 in parallel ─────────────────────────────────────
+    # Brief pause between waves to let rate limits reset
+    log("Phase 2 — Pausing 10s between waves for rate limit headroom...")
+    time.sleep(10)
+
+    # ── Wave 2: Batches 6-10 (2 concurrent) ──────────────────────────────────
     log("Phase 2 — Wave 2: Batches 6-10...")
     wave2_results = {}
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures = {
             executor.submit(generate_batch, i + 6, BATCHES[i + 5]): i + 6
             for i in range(5)

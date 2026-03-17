@@ -152,41 +152,75 @@ def _perplexity_call_with_sources(system_msg, user_msg, call_name, max_tokens=40
 
 # ─── GPT API ───
 
+# Model hierarchy: try GPT-5.4 first, fall back to gpt-4.1 if rate limited
+_GPT_MODELS = ["gpt-5.4", "gpt-4.1"]
+
 def _gpt_call(system_msg, user_msg, max_tokens=4000, max_retries=5):
-    """Make a GPT-5.4 API call with reasoning and exponential backoff for rate limits."""
+    """Make a GPT API call with model fallback and exponential backoff for rate limits.
+    
+    Tries GPT-5.4 first (with reasoning). If rate-limited after retries,
+    falls back to gpt-4.1 (which has higher rate limits).
+    """
     import time as _time
-    for attempt in range(max_retries):
-        resp = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "gpt-5.4",
+    
+    for model_idx, model in enumerate(_GPT_MODELS):
+        is_reasoning_model = model.startswith("gpt-5")
+        retries_for_model = max_retries if model_idx == 0 else 3
+        
+        for attempt in range(retries_for_model):
+            # Build request body based on model capabilities
+            body = {
+                "model": model,
                 "messages": [
-                    {"role": "developer", "content": system_msg},
+                    {"role": "developer" if is_reasoning_model else "system", "content": system_msg},
                     {"role": "user", "content": user_msg},
                 ],
-                "max_completion_tokens": max_tokens,
-                "reasoning_effort": "medium",
-            },
-            timeout=300,
-        )
-        if resp.status_code == 429:
-            # Rate limited — exponential backoff
-            retry_after = int(resp.headers.get("Retry-After", 0))
-            wait = max(retry_after, (2 ** attempt) * 15)  # 15s, 30s, 60s, 120s, 240s
-            log(f"  [GPT] Rate limited (429). Retry {attempt+1}/{max_retries} in {wait}s...")
-            _time.sleep(wait)
-            continue
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
-    # Final attempt without catching
-    resp.raise_for_status()
-    data = resp.json()
-    return data["choices"][0]["message"]["content"]
+            }
+            
+            if is_reasoning_model:
+                body["max_completion_tokens"] = max_tokens
+                body["reasoning_effort"] = "medium"
+            else:
+                body["max_tokens"] = max_tokens
+                body["temperature"] = 0.1
+            
+            try:
+                resp = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENAI_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=body,
+                    timeout=300,
+                )
+            except requests.exceptions.Timeout:
+                log(f"  [GPT] Timeout on {model}. Retry {attempt+1}/{retries_for_model}...")
+                continue
+            
+            if resp.status_code == 429:
+                retry_after = int(resp.headers.get("Retry-After", 0))
+                wait = max(retry_after, (2 ** attempt) * 15)
+                log(f"  [GPT] Rate limited (429) on {model}. Retry {attempt+1}/{retries_for_model} in {wait}s...")
+                _time.sleep(wait)
+                continue
+            
+            if resp.status_code == 404 and model_idx == 0:
+                # Model not available — skip to fallback
+                log(f"  [GPT] Model {model} not available (404). Falling back...")
+                break
+            
+            resp.raise_for_status()
+            data = resp.json()
+            if model_idx > 0:
+                log(f"  [GPT] Using fallback model: {model}")
+            return data["choices"][0]["message"]["content"]
+        
+        if model_idx < len(_GPT_MODELS) - 1:
+            log(f"  [GPT] Exhausted retries on {model}. Trying fallback model...")
+    
+    # All models exhausted
+    raise RuntimeError(f"GPT call failed: all models rate-limited after retries")
 
 
 # ─── Phase 1: Multi-Source Research ───
