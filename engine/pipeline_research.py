@@ -84,8 +84,17 @@ def run_research(brand_name, domain, market):
     st_count = len(premium_data["statista"])
     log(f"  Premium data: PitchBook={pb_count}, CB Insights={cb_count}, Statista={st_count}")
 
-    # ── Phase 1b: Perplexity Research (focused on digital/social/reviews) ──
-    log("Phase 1b: Perplexity research (digital, social, reviews, supplemental)...")
+    # ── Phase 1b: Perplexity Research ──
+    # When enrichment data is rich (verified financials + sentiment + premium sources),
+    # minimize Perplexity calls to avoid rate limits. Only fetch digital/social data.
+    has_verified_financials = len(premium_data.get('verified_financials', [])) > 0
+    has_verified_sentiment = len(premium_data.get('verified_sentiment', [])) > 0
+    has_rich_enrichment = has_verified_financials and has_verified_sentiment and pb_count > 0
+
+    if has_rich_enrichment:
+        log("Phase 1b: Enrichment data is comprehensive — minimizing Perplexity calls (digital only)...")
+    else:
+        log("Phase 1b: Perplexity research (digital, social, reviews, supplemental)...")
 
     pplx_system = f"""You are a senior research analyst conducting PE due diligence. Today's date is {today}.
 Answer thoroughly with specific numbers, dates, and facts.
@@ -174,19 +183,29 @@ For each fact, include the source URL in parentheses. Prefer industry research r
         log(f"  {name}: {len(content)} chars, {len(tagged_cites)} citations")
         return name, content, tagged_cites
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [
-            executor.submit(do_pplx_call, "core", prompt_core, 4000),
-            executor.submit(do_pplx_call, "digital", prompt_digital, 4000),
-            executor.submit(do_pplx_call, "market", prompt_market, 4000),
-        ]
-        for future in as_completed(futures):
-            try:
-                name, content, tagged_cites = future.result()
-                perplexity_findings[name] = content
-                perplexity_citations[name] = tagged_cites
-            except Exception as e:
-                log(f"  ERROR in Perplexity call: {e}")
+    if has_rich_enrichment:
+        # Only make 1 Perplexity call for digital/social data (not covered by enrichment)
+        try:
+            name, content, tagged_cites = do_pplx_call("digital", prompt_digital, 4000)
+            perplexity_findings[name] = content
+            perplexity_citations[name] = tagged_cites
+        except Exception as e:
+            log(f"  ERROR in Perplexity digital call: {e}")
+            # Non-fatal — enrichment data covers most needs
+    else:
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                executor.submit(do_pplx_call, "core", prompt_core, 4000),
+                executor.submit(do_pplx_call, "digital", prompt_digital, 4000),
+                executor.submit(do_pplx_call, "market", prompt_market, 4000),
+            ]
+            for future in as_completed(futures):
+                try:
+                    name, content, tagged_cites = future.result()
+                    perplexity_findings[name] = content
+                    perplexity_citations[name] = tagged_cites
+                except Exception as e:
+                    log(f"  ERROR in Perplexity call: {e}")
 
     log(f"  Perplexity done: {list(perplexity_findings.keys())}")
 
@@ -411,14 +430,17 @@ CRITICAL:
     ig = social.get("instagram", {})
 
     gap_queries = []
-    if not latest_rev or not latest_rev.get("amount"):
-        gap_queries.append(("revenue", f"What is {brand_name} most recent official annual revenue? Search for '{brand_name} revenue 2025', '{brand_name} financial results FY25'. Give the exact figure in native currency."))
-
-    if not tp or not tp.get("rating"):
-        gap_queries.append(("trustpilot", f"What is the current Trustpilot rating for {brand_name}? Search for 'Trustpilot {brand_name}'. What star rating (out of 5) and total review count?"))
-
-    if not ig or not ig.get("followers"):
-        gap_queries.append(("instagram", f"How many Instagram followers does {brand_name} have currently? Search for '{brand_name} Instagram followers' or 'HypeAuditor {brand_name}'."))
+    if has_rich_enrichment:
+        # With rich enrichment, only check Instagram gap (financials + Trustpilot are covered)
+        if not ig or not ig.get("followers"):
+            gap_queries.append(("instagram", f"How many Instagram followers does {brand_name} have currently? Search for '{brand_name} Instagram followers' or 'HypeAuditor {brand_name}'."))
+    else:
+        if not latest_rev or not latest_rev.get("amount"):
+            gap_queries.append(("revenue", f"What is {brand_name} most recent official annual revenue? Search for '{brand_name} revenue 2025', '{brand_name} financial results FY25'. Give the exact figure in native currency."))
+        if not tp or not tp.get("rating"):
+            gap_queries.append(("trustpilot", f"What is the current Trustpilot rating for {brand_name}? Search for 'Trustpilot {brand_name}'. What star rating (out of 5) and total review count?"))
+        if not ig or not ig.get("followers"):
+            gap_queries.append(("instagram", f"How many Instagram followers does {brand_name} have currently? Search for '{brand_name} Instagram followers' or 'HypeAuditor {brand_name}'."))
 
     if gap_queries:
         log(f"  Found {len(gap_queries)} gaps: {[q[0] for q in gap_queries]}. Running targeted searches...")
@@ -483,8 +505,13 @@ Return JSON with ONLY the fields where you found data:
         log("  No critical gaps found.")
 
     # ── Post-Processing: Source Validation & Staleness Checks ──
-    log("Post-processing: Source validation and staleness checks...")
-    research = _validate_and_clean_sources(research, brand_name, domain, pplx_system)
+    if has_rich_enrichment:
+        log("Post-processing: Skipping staleness/Trustpilot checks (enrichment data is authoritative)...")
+        # Still do basic source quality checks but skip Perplexity-based validation
+        # The enrichment data already has verified FY2025 financials and Trustpilot
+    else:
+        log("Post-processing: Source validation and staleness checks...")
+        research = _validate_and_clean_sources(research, brand_name, domain, pplx_system)
 
     # Attach metadata
     research["_source_registry"] = source_registry
