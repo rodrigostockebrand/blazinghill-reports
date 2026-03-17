@@ -153,7 +153,7 @@ def _perplexity_call_with_sources(system_msg, user_msg, call_name, max_tokens=40
 # ─── GPT API ───
 
 def _gpt_call(system_msg, user_msg, max_tokens=4000, max_retries=5):
-    """Make a GPT API call with exponential backoff for rate limits."""
+    """Make a GPT-5.4 API call with reasoning and exponential backoff for rate limits."""
     import time as _time
     for attempt in range(max_retries):
         resp = requests.post(
@@ -163,20 +163,20 @@ def _gpt_call(system_msg, user_msg, max_tokens=4000, max_retries=5):
                 "Content-Type": "application/json",
             },
             json={
-                "model": "gpt-4.1",
+                "model": "gpt-5.4",
                 "messages": [
-                    {"role": "system", "content": system_msg},
+                    {"role": "developer", "content": system_msg},
                     {"role": "user", "content": user_msg},
                 ],
-                "max_tokens": max_tokens,
-                "temperature": 0.0,
+                "max_completion_tokens": max_tokens,
+                "reasoning_effort": "medium",
             },
-            timeout=180,
+            timeout=300,
         )
         if resp.status_code == 429:
             # Rate limited — exponential backoff
             retry_after = int(resp.headers.get("Retry-After", 0))
-            wait = max(retry_after, (2 ** attempt) * 10)  # 10s, 20s, 40s, 80s, 160s
+            wait = max(retry_after, (2 ** attempt) * 15)  # 15s, 30s, 60s, 120s, 240s
             log(f"  [GPT] Rate limited (429). Retry {attempt+1}/{max_retries} in {wait}s...")
             _time.sleep(wait)
             continue

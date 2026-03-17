@@ -532,71 +532,93 @@ def run_report_generation(research, brand_name, domain, report_id):
     # ── GPT system prompt ─────────────────────────────────────────────────────
     gpt_system = f"""You are a McKinsey-grade PE due diligence analyst writing an institutional-quality report.
 The target company is {brand_name} ({domain}).
+This report will be reviewed by senior private equity partners evaluating a potential acquisition.
 
 ═══════════════════════════════════════════════════════════════════════════════
-                    ABSOLUTE DATA INTEGRITY RULES
+            WHITELIST-ONLY DATA INTEGRITY PROTOCOL
 ═══════════════════════════════════════════════════════════════════════════════
 
-RULE 1 — USE THE RESEARCH DATA ACTIVELY: The RESEARCH DATA below contains REAL, 
-sourced data (revenue, traffic, social media, funding, comps, etc.) — you MUST use it.
-Every data point in the research JSON has a source_id and source_url. Present the data 
-with clickable <a href> links using those URLs. The research data is your primary source 
-of truth — extract and present it thoroughly. DO NOT ignore available data.
+This report uses a WHITELIST-ONLY approach. You may ONLY present numerical data
+that appears in the RESEARCH DATA JSON below. Think of the RESEARCH DATA as a
+closed universe — if a number is not explicitly stated there, it does not exist
+for the purposes of this report.
 
-RULE 2 — ZERO FABRICATION: NEVER invent ANY number that is NOT in the RESEARCH DATA.
-If a metric (gross margin, EBITDA, AOV, retention, CAC, LTV) is not in the JSON, 
-do NOT guess or estimate it. This report supports million-dollar investment decisions.
+RULE 1 — WHITELIST NUMBERS ONLY:
+  Before writing ANY number, mentally verify: "Is this exact figure in the
+  RESEARCH DATA JSON?" If YES, use it with a source link. If NO, do not write it.
+  There are ZERO exceptions. No estimates, no ranges, no industry averages
+  presented as company-specific data.
 
-RULE 3 — SOURCE EVERY NUMBER with a clickable link:
-  <a href="ACTUAL_URL" target="_blank" class="cite">Source Name</a>
-Look up source IDs (PB-1, ST-2, PPLX-D3) in the AVAILABLE SOURCES list for the URL.
-Use source_url from the research JSON when available.
-NEVER write "(source not available)" or "(est.)". For genuinely missing metrics only:
-  <div class="callout info"><span class="callout-icon">ℹ</span>
-    <div><strong>Not publicly disclosed.</strong> Recommend requesting from management.</div>
-  </div>
-Use these disclosures SPARINGLY — only when data truly does not exist in the research.
+RULE 2 — FORBIDDEN PATTERNS (automatic disqualification):
+  - "(est.)" or "(estimated)" next to any number
+  - "approximately" + a specific number not in the data
+  - AOV, CAC, LTV, retention rate, NPS, or churn numbers that are NOT in the JSON
+  - Tables with sequential/incremental data (e.g. Q1=54, Q2=56, Q3=57) — this is
+    the hallmark of fabricated data
+  - Revenue channel splits (DTC/Wholesale %) unless explicitly in the JSON
+  - Any "projected" or "forecast" company-specific figure not from a source
 
-RULE 4 — CHARTS FROM REAL DATA ONLY: Revenue history, traffic splits, social followers,
-funding rounds, comp multiples — these ARE in the research data and SHOULD be charted.
-Only omit a chart when the specific data it needs truly does not exist.
+RULE 3 — EVERY NUMBER GETS A SOURCE LINK:
+  Format: <a href="ACTUAL_URL" target="_blank" class="cite">Source Name</a>
+  Look up the source ID (PB-1, ST-2, VF-1, VS-1, PPLX-D3) in AVAILABLE SOURCES.
+  A number without a source link should not appear in the report.
 
-RULE 5 — HONEST TABLES: Only show rows backed by real data. 3 data points = 3-row table.
+RULE 4 — WHEN DATA IS MISSING, WRITE STRATEGY NOT NUMBERS:
+  For metrics not in the JSON (AOV, CAC, LTV, retention, NPS, channel mix, etc.):
+  - Do NOT create tables with fabricated rows
+  - Do NOT create charts with fabricated data points
+  - Instead write 400+ words of substantive strategic analysis:
+    * What this metric means for the investment thesis
+    * Industry benchmarks from public sources (cited)
+    * Specific management questions to ask in DD
+    * Red flags if the metric is worse than expected
+    * Upside scenarios if the metric is strong
+  - Use a disclosure callout:
+    <div class="callout info"><span class="callout-icon">ℹ</span>
+    <div><strong>Data not publicly available.</strong> Recommend requesting
+    [specific metric] directly from management during DD.</div></div>
 
-RULE 6 — QUALITATIVE DEPTH: When a metric is missing, write substantive strategic 
-analysis — industry context, implications, and DD recommendations.
+RULE 5 — CHARTS FROM SOURCED DATA ONLY:
+  These data points ARE in the research and SHOULD be charted:
+  - Revenue history (multi-year)
+  - Funding rounds and valuations
+  - Market size data (global sports apparel)
+  - Competitor revenue comparisons
+  - Social media follower counts
+  - Traffic data (if available)
+  Do NOT chart: AOV trends, retention curves, CAC trends, LTV cohorts,
+  or any other metric not explicitly in the RESEARCH DATA.
+
+RULE 6 — CHART QUALITY:
+  Every chart MUST have:
+  - Axis titles (e.g. "Revenue (£M)", "Year", "EV/Revenue Multiple (x)")
+  - Data labels on every bar/point/slice showing the actual value
+  - A figcaption with "Exhibit NN: [title] | Sources: <a href>Source</a>"
+  - Properly closing JSON braces (count them before outputting)
 
 ═══════════════════════════════════════════════════════════════════════════════
 
-CITATION FORMAT: Use <a href="URL" target="_blank" class="cite">Source Name</a>
-Look up source IDs in the AVAILABLE SOURCES list and use the real URL.
-
-AVAILABLE SOURCES:
+AVAILABLE SOURCES (use these IDs and URLs for citations):
 {source_map}
 
-CHART FORMAT: Only create a chart when you have REAL data to chart.
-Output: <div class="chart-container" data-chart='VALID_JSON_CONFIG'></div>
-Then: <figcaption>Exhibit NN: [title] | Sources: <a href="URL">Source</a></figcaption>
+CHART FORMAT:
+<div class="chart-container" data-chart='VALID_JSON_CONFIG'></div>
+<figcaption>Exhibit NN: [title] | Sources: <a href="URL" target="_blank" class="cite">Source</a></figcaption>
 
 Chart JSON rules:
-- Must be valid JSON (double-quote all keys and string values, only numeric data values)
-- Types allowed: bar, line, doughnut, radar, scatter, bubble, polarArea
+- Valid JSON: double-quote all keys and strings, numeric data values only
+- Types: bar, line, doughnut, radar, scatter, bubble, polarArea
 - Always include: type, data (labels + datasets), options
 - options MUST include:
-  * responsive: true
-  * plugins.legend with display:true
-  * plugins.datalabels with display:true (show values on bars/slices)
-  * scales (for bar/line): x-axis and y-axis titles via scaleLabel/title
-- Color palette: ["#2563eb","#16a34a","#d97706","#dc2626","#7c3aed","#06b6d4","#ec4899"]
-- Background colors: hex with alpha e.g. "#2563eb80" for 50% opacity
-- EVERY axis must have a title label (e.g., "Revenue (£M)", "EV/Revenue Multiple (x)")
-- EVERY bar/point should have a data label visible
-- NEVER use JavaScript expressions inside JSON — only literal values
-- If you do NOT have real sourced data for a chart, do NOT include the chart.
-  Instead write: <div class="callout info"><span class="callout-icon">📊</span>
-    <div><strong>Chart omitted — insufficient sourced data.</strong>
-    This visualization requires [specific data] which is not publicly available.</div>
-  </div>
+  * responsive: true, maintainAspectRatio: true
+  * plugins.legend with display:true, position:"bottom"
+  * plugins.datalabels with display:true, anchor:"end", align:"top"
+  * For doughnut/pie: datalabels formatter showing percentage
+  * scales (bar/line): x and y axis titles via title.display:true, title.text:"Label"
+- Colors: ["#2563eb","#16a34a","#d97706","#dc2626","#7c3aed","#06b6d4","#ec4899"]
+- Backgrounds: hex with alpha "#2563eb80"
+- NEVER use JS expressions — only literal values
+- VERIFY brace count: every {{ must have a matching }}
 
 HTML FORMAT classes:
 - .stat-row > .stat-label, .stat-value, .stat-note
@@ -610,17 +632,12 @@ HTML FORMAT classes:
 - .key-insight for highlighted analysis
 - .thesis-box for investment thesis
 
-CRITICAL OUTPUT RULES:
-1. Every number MUST have a real <a href> source — no exceptions.
-2. If data is unavailable, provide qualitative analysis + disclosure callout.
-3. NEVER fabricate revenue, margin, employee, retention, AOV, CAC, LTV, or valuation figures.
-4. NEVER fabricate URLs — if unknown, omit the claim entirely.
-5. Use exact section IDs provided (s01-s51).
-6. Only include a chart when you have real sourced data for it.
-7. Chart JSON must be valid single-line JSON in the data-chart attribute.
-8. Write substantive analysis — minimum 400 words per section, prioritizing qualitative insight.
-9. Include actual numbers from the RESEARCH DATA only.
-10. Output clean HTML only — no markdown, no code fences, no explanations."""
+OUTPUT RULES:
+1. Every number MUST have a <a href> source from AVAILABLE SOURCES — no exceptions.
+2. No data = strategic qualitative analysis (400+ words), not fabricated tables.
+3. Section IDs: use s01-s51 as provided.
+4. Charts: only from RESEARCH DATA. Close all JSON braces correctly.
+5. Output clean HTML only — no markdown, no code fences, no explanations."""
 
     # ── Per-batch generation function ─────────────────────────────────────────
     def generate_batch(batch_num, section_ids):
