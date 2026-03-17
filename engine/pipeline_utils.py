@@ -152,8 +152,9 @@ def _perplexity_call_with_sources(system_msg, user_msg, call_name, max_tokens=40
 
 # ─── GPT API ───
 
-# Model hierarchy: try GPT-5.4 first, fall back to gpt-4.1 if rate limited
-_GPT_MODELS = ["gpt-5.4", "gpt-4.1"]
+# Model hierarchy: try best first, fall back to cheaper models if rate limited
+# Note: gpt-4o-mini has much higher rate limits than gpt-4.1/gpt-5.4
+_GPT_MODELS = ["gpt-4.1", "gpt-4o-mini"]
 
 def _gpt_call(system_msg, user_msg, max_tokens=4000, max_retries=5):
     """Make a GPT API call with model fallback and exponential backoff for rate limits.
@@ -200,7 +201,7 @@ def _gpt_call(system_msg, user_msg, max_tokens=4000, max_retries=5):
             
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get("Retry-After", 0))
-                wait = max(retry_after, (2 ** attempt) * 15)
+                wait = max(retry_after, min((2 ** attempt) * 30, 120))  # 30s, 60s, 120s cap
                 log(f"  [GPT] Rate limited (429) on {model}. Retry {attempt+1}/{retries_for_model} in {wait}s...")
                 _time.sleep(wait)
                 continue

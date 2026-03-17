@@ -684,39 +684,21 @@ ABSOLUTE REQUIREMENTS:
 </section>\n"""
             return batch_num, fallback
 
-    # ── Wave 1: Batches 1-5 (2 concurrent to avoid rate limits) ──────────────
-    log("Phase 2 — Wave 1: Batches 1-5...")
-    wave1_results = {}
+    # ── Sequential batch generation (serialized to avoid rate limits) ────────
+    log("Phase 2 — Generating 10 batches sequentially (rate limit safe)...")
+    ordered_batches = []
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {
-            executor.submit(generate_batch, i + 1, BATCHES[i]): i + 1
-            for i in range(5)
-        }
-        for future in as_completed(futures):
-            batch_num, html = future.result()
-            wave1_results[batch_num] = html
-
-    # Brief pause between waves to let rate limits reset
-    log("Phase 2 — Pausing 10s between waves for rate limit headroom...")
-    time.sleep(10)
-
-    # ── Wave 2: Batches 6-10 (2 concurrent) ──────────────────────────────────
-    log("Phase 2 — Wave 2: Batches 6-10...")
-    wave2_results = {}
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {
-            executor.submit(generate_batch, i + 6, BATCHES[i + 5]): i + 6
-            for i in range(5)
-        }
-        for future in as_completed(futures):
-            batch_num, html = future.result()
-            wave2_results[batch_num] = html
-
-    # ── Reassemble in order ───────────────────────────────────────────────────
-    all_results = {**wave1_results, **wave2_results}
-    ordered_batches = [all_results[i + 1] for i in range(10)]
+    for batch_idx in range(10):
+        batch_num = batch_idx + 1
+        section_ids = BATCHES[batch_idx]
+        log(f"Phase 2 — Batch {batch_num}/10: {', '.join(section_ids)}")
+        
+        _, html = generate_batch(batch_num, section_ids)
+        ordered_batches.append(html)
+        
+        # Brief pause between batches to stay under rate limits
+        if batch_idx < 9:
+            time.sleep(5)
 
     log(
         f"Phase 2 complete: {sum(len(b) for b in ordered_batches):,} total chars "
