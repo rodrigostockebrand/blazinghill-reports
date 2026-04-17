@@ -61,18 +61,25 @@
     return data;
   }
 
-  /* ─── Token Persistence (in-memory only — no storage APIs in sandboxed iframe) ─── */
+  /* ─── Token Persistence ─── */
+  // Use localStorage when available (Railway / production), fall back to in-memory (sandbox)
+  const _canStore = (() => { try { localStorage.setItem('_t', '1'); localStorage.removeItem('_t'); return true; } catch (e) { return false; } })();
+
   function saveSession(token) {
     state.token = token;
+    if (_canStore) localStorage.setItem('bh_token', token);
   }
 
   function clearSession() {
     state.token = null;
     state.account = null;
+    if (_canStore) localStorage.removeItem('bh_token');
   }
 
   function loadSession() {
-    return state.token || null;
+    if (state.token) return state.token;
+    if (_canStore) return localStorage.getItem('bh_token') || null;
+    return null;
   }
 
   /* ─── View Management ─── */
