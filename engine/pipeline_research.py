@@ -513,10 +513,32 @@ Return JSON with ONLY the fields where you found data:
         log("Post-processing: Source validation and staleness checks...")
         research = _validate_and_clean_sources(research, brand_name, domain, pplx_system)
 
+    # ── Phase 1e: DataForSEO API Data ──────────────────────────────────────
+    dataforseo_login = os.environ.get("DATAFORSEO_LOGIN", "")
+    dataforseo_data = {}
+    if dataforseo_login:
+        log("Phase 1e: Collecting DataForSEO data (traffic, keywords, backlinks, sentiment)...")
+        try:
+            import sys
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), "collectors"))
+            from dataforseo_collector import collect_dataforseo_data
+            dataforseo_data = collect_dataforseo_data(domain, market)
+            if dataforseo_data and not dataforseo_data.get("error"):
+                log(f"  DataForSEO: {len(dataforseo_data)} data keys collected")
+            else:
+                log(f"  DataForSEO: {dataforseo_data.get('error', 'empty response')}")
+                dataforseo_data = {}
+        except Exception as e:
+            log(f"  DataForSEO error (non-fatal): {e}")
+            dataforseo_data = {}
+    else:
+        log("Phase 1e: DataForSEO skipped (no credentials)")
+
     # Attach metadata
     research["_source_registry"] = source_registry
     research["_premium_data"] = {k: len(v) for k, v in premium_data.items()}
     research["_perplexity_calls"] = list(perplexity_findings.keys())
+    research["_dataforseo"] = dataforseo_data
 
     # Log key metrics
     financials = research.get("financials", {})

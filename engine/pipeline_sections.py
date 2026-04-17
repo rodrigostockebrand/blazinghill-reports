@@ -57,6 +57,7 @@ SECTIONS = [
     ("s49", "49", "IC Summary"),
     ("s50", "50", "AI Readiness"),
     ("s51", "51", "Appendix"),
+    ("s52", "52", "Data Integrity"),
 ]
 
 # Batch definitions: list of section ids per batch
@@ -763,6 +764,7 @@ _NAV_SECTIONS = [
     ("s49", "49", "IC Summary"),
     ("s50", "50", "AI Readiness"),
     ("s51", "51", "Appendix"),
+    ("s52", "52", "Data Integrity"),
 ]
 
 
