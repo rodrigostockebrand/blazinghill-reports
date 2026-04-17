@@ -110,6 +110,29 @@ app.post('/api/admin/add-credits', (req, res) => {
   res.json({ success: true, user: updated });
 });
 
+// ─── Admin: Update user plan (protected by admin key) ───
+app.post('/api/admin/update-plan', (req, res) => {
+  const adminKey = req.headers['x-admin-key'];
+  if (!adminKey || adminKey !== 'BH-ADMIN-2026-TEMP') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const { email, plan } = req.body;
+  if (!email || !plan) {
+    return res.status(400).json({ error: 'email and plan required' });
+  }
+  const validPlans = ['demo', 'Starter', 'Professional', 'Lifetime'];
+  if (!validPlans.includes(plan)) {
+    return res.status(400).json({ error: `Invalid plan. Must be one of: ${validPlans.join(', ')}` });
+  }
+  const user = db.prepare('SELECT id, email, credits, plan FROM users WHERE email = ?').get(email.toLowerCase().trim());
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  db.prepare("UPDATE users SET plan = ?, updated_at = datetime('now') WHERE id = ?").run(plan, user.id);
+  const updated = db.prepare('SELECT id, email, credits, plan FROM users WHERE id = ?').get(user.id);
+  res.json({ success: true, user: updated });
+});
+
 // Report status endpoint (public, for polling)
 app.get('/api/report-status/:id', (req, res) => {
   const report = db.prepare(`
