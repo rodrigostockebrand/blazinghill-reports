@@ -152,76 +152,132 @@ def _perplexity_call_with_sources(system_msg, user_msg, call_name, max_tokens=40
 
 # ─── GPT API ───
 
-# Model hierarchy: try best first, fall back to cheaper models if rate limited
-# Note: gpt-4o-mini has much higher rate limits than gpt-4.1/gpt-5.4
+# Model hierarchy: try cheapest/fastest first for reliability
+# gpt-4o-mini has the highest rate limits; gpt-4.1 is the quality fallback
 _GPT_MODELS = ["gpt-4o-mini", "gpt-4.1"]
 
 def _gpt_call(system_msg, user_msg, max_tokens=4000, max_retries=5):
-    """Make a GPT API call with model fallback and exponential backoff for rate limits.
-    
-    Tries GPT-5.4 first (with reasoning). If rate-limited after retries,
-    falls back to gpt-4.1 (which has higher rate limits).
-    """
+    """Make a GPT API call with model fallback, Perplexity fallback, and exponential backoff."""
     import time as _time
     
-    for model_idx, model in enumerate(_GPT_MODELS):
-        is_reasoning_model = model.startswith("gpt-5")
-        retries_for_model = 3 if model_idx == 0 else 2
-        
-        for attempt in range(retries_for_model):
-            # Build request body based on model capabilities
-            body = {
-                "model": model,
-                "messages": [
-                    {"role": "developer" if is_reasoning_model else "system", "content": system_msg},
-                    {"role": "user", "content": user_msg},
-                ],
-            }
+    last_error = None
+    
+    # --- Try OpenAI models ---
+    if OPENAI_API_KEY:
+        for model_idx, model in enumerate(_GPT_MODELS):
+            is_reasoning_model = model.startswith("gpt-5")
+            retries_for_model = 3 if model_idx == 0 else 2
             
-            if is_reasoning_model:
-                body["max_completion_tokens"] = max_tokens
-                body["reasoning_effort"] = "medium"
-            else:
-                body["max_tokens"] = max_tokens
-                body["temperature"] = 0.1
+            for attempt in range(retries_for_model):
+                body = {
+                    "model": model,
+                    "messages": [
+                        {"role": "developer" if is_reasoning_model else "system", "content": system_msg},
+                        {"role": "user", "content": user_msg},
+                    ],
+                }
+                
+                if is_reasoning_model:
+                    body["max_completion_tokens"] = max_tokens
+                    body["reasoning_effort"] = "medium"
+                else:
+                    body["max_tokens"] = max_tokens
+                    body["temperature"] = 0.1
+                
+                try:
+                    resp = requests.post(
+                        "https://api.openai.com/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {OPENAI_API_KEY}",
+                            "Content-Type": "application/json",
+                        },
+                        json=body,
+                        timeout=300,
+                    )
+                except requests.exceptions.Timeout:
+                    log(f"  [GPT] Timeout on {model}. Retry {attempt+1}/{retries_for_model}...")
+                    continue
+                
+                if resp.status_code == 429:
+                    retry_after = int(resp.headers.get("Retry-After", 0))
+                    wait = max(retry_after, min((2 ** attempt) * 10, 60))
+                    try:
+                        err_body = resp.json()
+                        err_msg = err_body.get("error", {}).get("message", "")[:200]
+                    except:
+                        err_msg = resp.text[:200]
+                    log(f"  [GPT] Rate limited (429) on {model}. Retry {attempt+1}/{retries_for_model} in {wait}s. Detail: {err_msg}")
+                    last_error = f"429 on {model}: {err_msg}"
+                    _time.sleep(wait)
+                    continue
+                
+                if resp.status_code == 404 and model_idx == 0:
+                    log(f"  [GPT] Model {model} not available (404). Falling back...")
+                    break
+                
+                if resp.status_code == 401:
+                    log(f"  [GPT] Invalid API key (401). Skipping all OpenAI models.")
+                    last_error = "OpenAI API key invalid (401)"
+                    break
+                
+                if resp.status_code == 402:
+                    log(f"  [GPT] Insufficient funds (402). Skipping all OpenAI models.")
+                    last_error = "OpenAI API key has insufficient funds (402)"
+                    break
+                
+                resp.raise_for_status()
+                data = resp.json()
+                if model_idx > 0:
+                    log(f"  [GPT] Using fallback model: {model}")
+                return data["choices"][0]["message"]["content"]
             
+            if model_idx < len(_GPT_MODELS) - 1:
+                log(f"  [GPT] Exhausted retries on {model}. Trying fallback model...")
+            # Break out of model loop on auth/payment errors
+            if last_error and ("401" in str(last_error) or "402" in str(last_error)):
+                break
+    else:
+        log("  [GPT] No OPENAI_API_KEY set. Skipping OpenAI.")
+        last_error = "No OPENAI_API_KEY"
+    
+    # --- Fallback to Perplexity for text generation ---
+    if PERPLEXITY_API_KEY:
+        log(f"  [GPT] All OpenAI models failed ({last_error}). Falling back to Perplexity sonar-pro...")
+        for attempt in range(3):
             try:
                 resp = requests.post(
-                    "https://api.openai.com/v1/chat/completions",
+                    "https://api.perplexity.ai/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {OPENAI_API_KEY}",
+                        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
                         "Content-Type": "application/json",
                     },
-                    json=body,
-                    timeout=300,
+                    json={
+                        "model": "sonar-pro",
+                        "messages": [
+                            {"role": "system", "content": system_msg},
+                            {"role": "user", "content": user_msg},
+                        ],
+                        "max_tokens": min(max_tokens, 8000),
+                        "temperature": 0.1,
+                    },
+                    timeout=180,
                 )
-            except requests.exceptions.Timeout:
-                log(f"  [GPT] Timeout on {model}. Retry {attempt+1}/{retries_for_model}...")
-                continue
-            
-            if resp.status_code == 429:
-                retry_after = int(resp.headers.get("Retry-After", 0))
-                wait = max(retry_after, min((2 ** attempt) * 10, 60))  # 10s, 20s, 40s, 60s cap
-                log(f"  [GPT] Rate limited (429) on {model}. Retry {attempt+1}/{retries_for_model} in {wait}s...")
-                _time.sleep(wait)
-                continue
-            
-            if resp.status_code == 404 and model_idx == 0:
-                # Model not available — skip to fallback
-                log(f"  [GPT] Model {model} not available (404). Falling back...")
-                break
-            
-            resp.raise_for_status()
-            data = resp.json()
-            if model_idx > 0:
-                log(f"  [GPT] Using fallback model: {model}")
-            return data["choices"][0]["message"]["content"]
-        
-        if model_idx < len(_GPT_MODELS) - 1:
-            log(f"  [GPT] Exhausted retries on {model}. Trying fallback model...")
+                if resp.status_code == 429:
+                    wait = min((2 ** attempt) * 15, 60)
+                    log(f"  [Perplexity fallback] Rate limited. Retry {attempt+1}/3 in {wait}s...")
+                    _time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                log(f"  [Perplexity fallback] Success — generated {len(data['choices'][0]['message']['content'])} chars")
+                return data["choices"][0]["message"]["content"]
+            except Exception as e:
+                log(f"  [Perplexity fallback] Attempt {attempt+1}/3 failed: {e}")
+                if attempt < 2:
+                    _time.sleep(10)
     
-    # All models exhausted
-    raise RuntimeError(f"GPT call failed: all models rate-limited after retries")
+    # All providers exhausted
+    raise RuntimeError(f"GPT call failed: all providers exhausted. Last error: {last_error}")
 
 
 # ─── Phase 1: Multi-Source Research ───
