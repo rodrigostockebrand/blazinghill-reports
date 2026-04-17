@@ -201,7 +201,7 @@
         </div>
         <div class="report-row-meta">
           <span class="report-market">${escapeHtml(r.market)}</span>
-          <span class="report-status status-${r.status}">${r.status === 'completed' ? '✓ Ready' : '⏳ Generating...'}</span>
+          <span class="report-status status-${r.status}">${r.status === 'completed' ? '✓ Ready' : r.status === 'failed' ? '✗ Failed' : '⏳ Generating...'}</span>
         </div>
         <div class="report-row-actions">
           ${r.status === 'completed' && r.report_url ? `<a href="${r.report_url}" target="_blank" class="secondary-btn small">View report</a>` : ''}
@@ -471,11 +471,16 @@
         if (data.report.status === 'completed') {
           clearInterval(interval);
           loadReports();
-          submissionResult.innerHTML += '<br><strong style="color:#16a34a;">✓ Report is ready!</strong>';
+          submissionResult.innerHTML += '<br><strong style="color:#16a34a;">✓ Report is ready! Click "My Reports" to view it.</strong>';
+        } else if (data.report.status === 'failed') {
+          clearInterval(interval);
+          loadReports();
+          const notes = data.report.notes || 'Unknown error';
+          submissionResult.innerHTML += `<br><strong style="color:#dc2626;">✗ Report generation failed.</strong><br><span style="font-size:0.85em;color:#666;">${notes.slice(0, 200)}</span>`;
         }
       } catch (e) { /* ignore */ }
-      if (attempts > 30) clearInterval(interval); // Stop after 2.5 minutes
-    }, 5000);
+      if (attempts > 180) clearInterval(interval); // Stop after 30 minutes
+    }, 10000);
   }
 
   async function refreshUser() {
