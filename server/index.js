@@ -77,7 +77,18 @@ app.use('/api/webhook', webhookRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    version: 'v5.3',
+    engine: 'perplexity-primary',
+    timestamp: new Date().toISOString(),
+    keys: {
+      perplexity: !!process.env.PERPLEXITY_API_KEY,
+      openai: !!process.env.OPENAI_API_KEY,
+      dataforseo: !!process.env.DATAFORSEO_LOGIN,
+      cashmere: !!process.env.CASHMERE_API_KEY,
+    }
+  });
 });
 
 // ─── Admin: Add credits to a user (protected by admin key) ───
