@@ -685,22 +685,49 @@ ABSOLUTE REQUIREMENTS:
 </section>\n"""
             return batch_num, fallback
 
-    # ── Sequential batch generation (serialized to avoid rate limits) ────────
-    log("Phase 2 — Generating 10 batches sequentially (rate limit safe)...")
-    ordered_batches = []
-
-    for batch_idx in range(10):
-        batch_num = batch_idx + 1
-        section_ids = BATCHES[batch_idx]
-        log(f"Phase 2 — Batch {batch_num}/10: {', '.join(section_ids)}")
+    # ── Parallel batch generation with controlled concurrency ─────────────
+    log("Phase 2 — Generating 10 batches (3 concurrent workers)...")
+    
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    batch_results = {}  # {batch_num: html}
+    
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {}
+        for batch_idx in range(len(BATCHES)):
+            batch_num = batch_idx + 1
+            section_ids = BATCHES[batch_idx]
+            log(f"Phase 2 — Queuing batch {batch_num}/10: {', '.join(section_ids)}")
+            future = executor.submit(generate_batch, batch_num, section_ids)
+            futures[future] = batch_num
         
-        _, html = generate_batch(batch_num, section_ids)
-        ordered_batches.append(html)
-        
-        # Brief pause between batches to stay under rate limits
-        if batch_idx < 9:
-            time.sleep(5)
-
+        for future in as_completed(futures):
+            batch_num = futures[future]
+            try:
+                num, html = future.result()
+                batch_results[num] = html
+                log(f"Phase 2 — Batch {num}/10 complete: {len(html):,} chars")
+            except Exception as e:
+                log(f"Phase 2 — Batch {batch_num}/10 FAILED: {e}")
+                # Generate fallback sections
+                section_ids = BATCHES[batch_num - 1]
+                fallback = ""
+                section_map = {sid: (num, title) for sid, num, title in SECTIONS}
+                for sid in section_ids:
+                    snum, title = section_map[sid]
+                    fallback += f'''<section class="section" id="{sid}">
+  <div class="section-label">Section {snum}</div>
+  <h2>{title}</h2>
+  <div class="callout danger">
+    <span class="callout-icon">⚠</span>
+    <div>Section generation failed: {str(e)[:200]}</div>
+  </div>
+</section>\n'''
+                batch_results[batch_num] = fallback
+    
+    # Reassemble in order
+    ordered_batches = [batch_results.get(i+1, "") for i in range(len(BATCHES))]
+    
     log(
         f"Phase 2 complete: {sum(len(b) for b in ordered_batches):,} total chars "
         f"across {len(ordered_batches)} batches"

@@ -53,12 +53,12 @@ def run_research(brand_name, domain, market):
             ],
             "cbinsights": [
                 (CBINSIGHTS_RESEARCH, f"{brand_name} DTC brand growth strategy", "CB Insights"),
-                (CBINSIGHTS_RESEARCH, f"athletic apparel market trends acquisition valuation", "CB Insights"),
+                (CBINSIGHTS_RESEARCH, f"{market} market trends acquisition valuation", "CB Insights"),
             ],
             "statista": [
-                (STATISTA_PREMIUM, f"athletic apparel sportswear market size revenue global", "Statista"),
-                (STATISTA_PREMIUM, f"Nike Adidas Lululemon Under Armour revenue sportswear", "Statista"),
-                (STATISTA_FREE, f"{brand_name} fitness apparel ecommerce UK", "Statista"),
+                (STATISTA_PREMIUM, f"{market} market size revenue global", "Statista"),
+                (STATISTA_PREMIUM, f"{brand_name} competitors revenue market share", "Statista"),
+                (STATISTA_FREE, f"{brand_name} {market} ecommerce", "Statista"),
             ],
         }
 

@@ -167,15 +167,15 @@ function runReport({ reportId, brandName, domain, market, analysisLens, enrichme
             reject(err);
         });
 
-        // Set a timeout (45 minutes max — sequential batch generation with rate limit retries)
+        // Set a timeout (25 minutes max — parallel batch generation with gpt-4o-mini primary)
         const timeout = setTimeout(() => {
-            console.error('[engine] Pipeline timed out after 45 minutes');
+            console.error('[engine] Pipeline timed out after 25 minutes');
             child.kill('SIGKILL');
             try {
-                db.prepare(`UPDATE reports SET status = 'failed', notes = 'Generation timed out after 45 minutes' WHERE id = ?`).run(reportId);
+                db.prepare(`UPDATE reports SET status = 'failed', notes = 'Generation timed out after 25 minutes' WHERE id = ?`).run(reportId);
             } catch (e) {}
             reject(new Error('Report generation timed out'));
-        }, 45 * 60 * 1000);
+        }, 25 * 60 * 1000);
 
         child.on('close', () => clearTimeout(timeout));
     });

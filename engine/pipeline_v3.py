@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BlazingHill Report Engine v4.0 — Main Entry Point
+BlazingHill Report Engine v5.1 — Main Entry Point
 
 Modular architecture:
   pipeline_utils.py      — Shared imports, constants, API call wrappers (GPT-5.4)
@@ -27,7 +27,7 @@ from pipeline_postval import validate_report_html
 
 def main(brand_name, domain, market, report_id, output_dir):
     """Main pipeline v4.0: research -> generation -> assembly -> validation."""
-    log(f"Starting BlazingHill Report Engine v4.0")
+    log(f"Starting BlazingHill Report Engine v5.1 — gpt-4o-mini primary, parallel batching")
     log(f"Brand: {brand_name} | Domain: {domain} | Market: {market}")
     log(f"Report ID: {report_id} | Output: {output_dir}")
 
