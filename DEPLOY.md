@@ -22,14 +22,19 @@ Set these in Railway's service settings:
 | `JWT_SECRET` | Yes | Auth tokens — generate with `openssl rand -hex 32` |
 | `NODE_ENV` | Yes | Set to `production` |
 | `PORT` | Auto | Railway sets this automatically (default 8000) |
+| `RAILWAY_VOLUME_MOUNT_PATH` | Auto | Railway sets this when volume is attached |
 
 ## Volume Mount
 
-Mount a persistent volume at `/data` for:
-- SQLite database (`/data/blazinghill.db`)
-- Generated reports (`/data/reports/`)
+Mount a persistent volume for the SQLite database and generated reports:
 
-In Railway: Settings > Volumes > Add Volume > Mount path: `/data`
+1. In Railway: go to your service > Settings > Volumes
+2. Click "Add Volume"
+3. Set the mount path (e.g., `/data`)
+4. Railway will automatically set `RAILWAY_VOLUME_MOUNT_PATH=/data`
+5. The app reads this env var to store `blazinghill.db` and generated report HTML files
+
+Without a volume, data is lost on every redeploy.
 
 ## Deploy Steps
 
