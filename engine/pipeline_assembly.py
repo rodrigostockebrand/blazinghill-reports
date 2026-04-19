@@ -240,6 +240,77 @@ def _build_dataforseo_charts(research):
     return "\n\n".join(charts_html)
 
 
+def _fix_section_ids(batches):
+    """
+    Fix section IDs in GPT-generated batches.
+
+    Problem: Each batch's GPT output often resets section numbering to s01-s05
+    instead of using the correct global IDs (e.g. batch 2 should be s06-s10).
+    This causes the sidebar nav links (which use the correct IDs) to not find
+    matching elements in the DOM.
+
+    Solution: Split each batch's HTML into individual <section> blocks, then
+    reassign the correct id and section-label based on the BATCHES definition.
+    """
+    import re as _re
+    from pipeline_sections import BATCHES, SECTIONS
+
+    section_num_map = {sid: num for sid, num, title in SECTIONS}
+
+    fixed_batches = []
+    for batch_idx, batch_html in enumerate(batches):
+        if batch_idx >= len(BATCHES):
+            fixed_batches.append(batch_html)
+            continue
+
+        expected_ids = BATCHES[batch_idx]  # e.g. ["s06", "s07", "s08", "s09", "s10"]
+
+        # Split the batch HTML into individual <section>...</section> blocks
+        # Use a regex that captures each section element
+        section_pattern = _re.compile(
+            r'(<section\b[^>]*\bid=)(["\'])s\d+\2([^>]*>)',
+            _re.IGNORECASE
+        )
+        
+        # Find all section tag matches in order
+        matches = list(section_pattern.finditer(batch_html))
+        
+        if len(matches) == 0:
+            fixed_batches.append(batch_html)
+            continue
+
+        # Rebuild HTML with corrected IDs
+        html = batch_html
+        # Process in reverse so string positions don't shift
+        for i in range(min(len(matches), len(expected_ids)) - 1, -1, -1):
+            match = matches[i]
+            expected_id = expected_ids[i]
+            expected_num = section_num_map.get(expected_id, expected_id.replace('s', ''))
+            quote = match.group(2)  # " or '
+            # Replace the section tag's id
+            new_tag = f'{match.group(1)}{quote}{expected_id}{quote}{match.group(3)}'
+            html = html[:match.start()] + new_tag + html[match.end():]
+
+        # Also fix section-label divs: "Section 01" -> "Section 06" etc.
+        # These appear as: <div class="section-label">Section 01</div>
+        label_pattern = _re.compile(
+            r'(<div\s+class=["\']section-label["\'][^>]*>\s*Section\s+)(\d+)(\s*</div>)',
+            _re.IGNORECASE
+        )
+        label_matches = list(label_pattern.finditer(html))
+        # Map them to expected section numbers in order
+        for i in range(min(len(label_matches), len(expected_ids)) - 1, -1, -1):
+            m = label_matches[i]
+            expected_id = expected_ids[i]
+            expected_num = section_num_map.get(expected_id, expected_id.replace('s', ''))
+            new_label = f'{m.group(1)}{expected_num}{m.group(3)}'
+            html = html[:m.start()] + new_label + html[m.end():]
+
+        fixed_batches.append(html)
+
+    return fixed_batches
+
+
 def assemble_html(brand_name, domain, batches, research, report_id):
     """
     Phase 3: Assemble the final HTML report.
@@ -253,6 +324,10 @@ def assemble_html(brand_name, domain, batches, research, report_id):
     report_id  : str
     """
     log("Phase 3: Assembling HTML report (52 sections, McKinsey CSS, Chart.js, v2)...")
+
+    # ── Fix section IDs (GPT often resets numbering per batch) ────────────────
+    batches = _fix_section_ids(batches)
+    log("  [assembly] Section IDs normalized across all batches")
 
     # ── Extract key data ──────────────────────────────────────────────────────
     company     = research.get("company", {})
