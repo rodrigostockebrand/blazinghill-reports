@@ -61,6 +61,15 @@
     return data;
   }
 
+  async function apiDelete(endpoint) {
+    const headers = {};
+    if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
+    const res = await fetch(`${API_BASE}${endpoint}`, { method: 'DELETE', headers });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  }
+
   /* ─── Token Persistence ─── */
   // Use localStorage when available (Railway / production), fall back to in-memory (sandbox)
   const _canStore = (() => { try { localStorage.setItem('_t', '1'); localStorage.removeItem('_t'); return true; } catch (e) { return false; } })();
@@ -194,7 +203,7 @@
     }
 
     container.innerHTML = reports.map(r => `
-      <div class="report-row">
+      <div class="report-row" id="report-row-${r.id}">
         <div class="report-row-info">
           <strong>${escapeHtml(r.brand_name)}</strong>
           <span class="report-domain">${escapeHtml(r.domain)}</span>
@@ -205,10 +214,40 @@
         </div>
         <div class="report-row-actions">
           ${r.status === 'completed' && r.report_url ? `<a href="${r.report_url}" target="_blank" class="secondary-btn small">View report</a>` : ''}
+          ${r.status === 'failed' ? `<button class="remove-report-btn" data-report-id="${r.id}" title="Remove failed report">✕ Remove</button>` : ''}
           <span class="report-date">${new Date(r.created_at).toLocaleDateString()}</span>
         </div>
       </div>
     `).join('');
+
+    // Attach remove handlers for failed reports
+    container.querySelectorAll('.remove-report-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const reportId = btn.dataset.reportId;
+        btn.disabled = true;
+        btn.textContent = 'Removing...';
+        try {
+          await apiDelete(`/api/reports/${reportId}`);
+          const row = qs(`report-row-${reportId}`);
+          if (row) {
+            row.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+            row.style.opacity = '0';
+            row.style.transform = 'translateX(20px)';
+            setTimeout(() => {
+              row.remove();
+              // If no reports left, show empty message
+              if (!container.querySelector('.report-row')) {
+                container.innerHTML = '<p class="tiny-note">No reports generated yet. Use the "New Report" tab to create your first report.</p>';
+              }
+            }, 300);
+          }
+        } catch (e) {
+          btn.disabled = false;
+          btn.textContent = '✕ Remove';
+          alert(e.message || 'Could not remove report.');
+        }
+      });
+    });
   }
 
   function escapeHtml(str) {

@@ -1118,7 +1118,28 @@ input:focus, select:focus, textarea:focus {
   border-radius: 6px;
 }
 .status-completed { color: var(--green); background: rgba(15, 159, 110, 0.08); }
+.status-failed { color: #dc2626; background: rgba(220, 38, 38, 0.08); }
 .status-generating { color: var(--gold); background: rgba(184, 135, 70, 0.08); }
+.remove-report-btn {
+  font-size: 0.78rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid rgba(220, 38, 38, 0.25);
+  background: rgba(220, 38, 38, 0.06);
+  color: #dc2626;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  white-space: nowrap;
+}
+.remove-report-btn:hover {
+  background: rgba(220, 38, 38, 0.12);
+  border-color: rgba(220, 38, 38, 0.4);
+}
+.remove-report-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .report-row-actions {
   display: flex;
   gap: 0.75rem;

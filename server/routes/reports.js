@@ -101,4 +101,22 @@ router.post('/', (req, res) => {
   });
 });
 
+// DELETE /api/reports/:id — Remove a failed report from the user's list
+router.delete('/:id', (req, res) => {
+  const report = db.prepare(`
+    SELECT id, status FROM reports WHERE id = ? AND user_id = ?
+  `).get(req.params.id, req.user.id);
+
+  if (!report) {
+    return res.status(404).json({ error: 'Report not found.' });
+  }
+
+  if (report.status !== 'failed') {
+    return res.status(400).json({ error: 'Only failed reports can be removed.' });
+  }
+
+  db.prepare('DELETE FROM reports WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  res.json({ success: true });
+});
+
 module.exports = router;
