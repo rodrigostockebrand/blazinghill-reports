@@ -133,6 +133,24 @@ app.post('/api/admin/update-plan', (req, res) => {
   res.json({ success: true, user: updated });
 });
 
+// ─── Admin: List recent reports with error details ───
+app.get('/api/admin/reports', (req, res) => {
+  const adminKey = req.headers['x-admin-key'];
+  if (!adminKey || adminKey !== 'BH-ADMIN-2026-TEMP') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const limit = parseInt(req.query.limit) || 20;
+  const reports = db.prepare(`
+    SELECT r.id, r.brand_name, r.domain, r.market, r.status, r.notes, r.report_url,
+           r.created_at, r.completed_at, u.email as user_email
+    FROM reports r
+    LEFT JOIN users u ON r.user_id = u.id
+    ORDER BY r.created_at DESC
+    LIMIT ?
+  `).all(limit);
+  res.json({ reports });
+});
+
 // Report status endpoint (public, for polling)
 app.get('/api/report-status/:id', (req, res) => {
   const report = db.prepare(`
