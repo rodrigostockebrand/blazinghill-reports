@@ -162,7 +162,9 @@ app.post('/api/admin/patch-report-codes', (req, res) => {
 
   const fs = require('fs');
   const path = require('path');
-  const reportDir = path.join(__dirname, '..', 'reports', reportId);
+  const volumeMount = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
+  const reportsBase = volumeMount ? path.join(volumeMount, 'reports') : path.join(__dirname, '..', 'reports');
+  const reportDir = path.join(reportsBase, reportId);
   const indexPath = path.join(reportDir, 'index.html');
 
   if (!fs.existsSync(indexPath)) {
