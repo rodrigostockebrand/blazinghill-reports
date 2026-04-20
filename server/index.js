@@ -151,6 +151,36 @@ app.get('/api/admin/reports', (req, res) => {
   res.json({ reports });
 });
 
+// ─── Admin: Patch access codes in an existing report ───
+app.post('/api/admin/patch-report-codes', (req, res) => {
+  const adminKey = req.headers['x-admin-key'];
+  if (!adminKey || adminKey !== 'BH-ADMIN-2026-TEMP') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const { reportId } = req.body;
+  if (!reportId) return res.status(400).json({ error: 'reportId required' });
+
+  const fs = require('fs');
+  const path = require('path');
+  const reportDir = path.join(__dirname, '..', 'reports', reportId);
+  const indexPath = path.join(reportDir, 'index.html');
+
+  if (!fs.existsSync(indexPath)) {
+    return res.status(404).json({ error: 'Report HTML not found' });
+  }
+
+  let html = fs.readFileSync(indexPath, 'utf8');
+  const oldPattern = /var VALID_CODES\s*=\s*\[.*?\];/;
+  const newCodes = "var VALID_CODES = ['MELLER2026', 'BLAZINGHILL', 'BH2025', 'BH2026', 'DD2025', 'DD2026'];";
+  if (oldPattern.test(html)) {
+    html = html.replace(oldPattern, newCodes);
+    fs.writeFileSync(indexPath, html, 'utf8');
+    res.json({ success: true, message: 'Access codes updated' });
+  } else {
+    res.json({ success: false, message: 'VALID_CODES pattern not found in report HTML' });
+  }
+});
+
 // Report status endpoint (public, for polling)
 app.get('/api/report-status/:id', (req, res) => {
   const report = db.prepare(`

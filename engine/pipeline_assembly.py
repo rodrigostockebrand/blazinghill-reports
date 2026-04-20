@@ -1448,7 +1448,7 @@ a.cite:hover {{ background: #dbeafe; text-decoration: none; }}
    ═══════════════════════════════════════════════════════ */
 
 // ── Access Gate ────────────────────────────────────────
-var VALID_CODES = ['BLAZINGHILL', 'BH2025', 'DD2025'];
+var VALID_CODES = ['MELLER2026', 'BLAZINGHILL', 'BH2025', 'BH2026', 'DD2025', 'DD2026'];
 
 function checkGate() {{
   var val = document.getElementById('gateInput').value.trim().toUpperCase();
