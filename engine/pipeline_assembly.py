@@ -6,6 +6,14 @@ fact-check section, DataForSEO charts, full HTML assembly.
 """
 from pipeline_utils import *
 from pipeline_sections import SECTIONS, _NAV_SECTIONS
+
+def _safe_get(d, *keys, default="N/A"):
+    """Safely traverse nested dicts where intermediate values may be None."""
+    for key in keys:
+        if d is None or not isinstance(d, dict):
+            return default
+        d = d.get(key)
+    return d if d is not None else default
 def _build_sidebar_nav():
     """Build sidebar nav HTML for all 51 sections."""
     links = []
@@ -216,9 +224,9 @@ def _build_dataforseo_charts(research):
     # ── Content Sentiment Analysis Chart ──
     content = dfse.get("content_citations")
     if content and isinstance(content, list) and len(content) > 0:
-        pos = sum(1 for c in content if c.get("sentiment", {}).get("polarity", 0) > 0.1)
-        neu = sum(1 for c in content if -0.1 <= c.get("sentiment", {}).get("polarity", 0) <= 0.1)
-        neg = sum(1 for c in content if c.get("sentiment", {}).get("polarity", 0) < -0.1)
+        pos = sum(1 for c in content if _safe_get(c, "sentiment", "polarity", default=0) > 0.1)
+        neu = sum(1 for c in content if -0.1 <= _safe_get(c, "sentiment", "polarity", default=0) <= 0.1)
+        neg = sum(1 for c in content if _safe_get(c, "sentiment", "polarity", default=0) < -0.1)
         if pos + neu + neg > 0:
             chart_cfg = _json.dumps({
                 "type": "doughnut",
@@ -329,23 +337,23 @@ def assemble_html(brand_name, domain, batches, research, report_id):
     batches = _fix_section_ids(batches)
     log("  [assembly] Section IDs normalized across all batches")
 
-    # ── Extract key data ──────────────────────────────────────────────────────
-    company     = research.get("company", {})
-    financials  = research.get("financials", {})
-    sentiment   = research.get("customer_sentiment", {})
-    source_registry = research.get("_source_registry", [])
-    premium_data    = research.get("_premium_data", {})
+    # ── Extract key data (use 'or' to handle None values) ─────────────────────
+    company     = research.get("company") or {}
+    financials  = research.get("financials") or {}
+    sentiment   = research.get("customer_sentiment") or {}
+    source_registry = research.get("_source_registry") or []
+    premium_data    = research.get("_premium_data") or {}
 
-    latest_rev   = financials.get("latest_revenue", {})
-    rev_amount   = latest_rev.get("amount", "N/A")
-    rev_year     = latest_rev.get("year", "")
-    rev_source   = latest_rev.get("source_url", "")
-    rev_note     = latest_rev.get("source_note", "")
-    gross_margin = financials.get("gross_margin", {}).get("value", "N/A")
-    ebitda_margin = financials.get("ebitda", {}).get("margin", "N/A")
-    ebitda_amount = financials.get("ebitda", {}).get("amount", "N/A")
+    latest_rev   = financials.get("latest_revenue") or {}
+    rev_amount   = latest_rev.get("amount", "N/A") if isinstance(latest_rev, dict) else "N/A"
+    rev_year     = latest_rev.get("year", "") if isinstance(latest_rev, dict) else ""
+    rev_source   = latest_rev.get("source_url", "") if isinstance(latest_rev, dict) else ""
+    rev_note     = latest_rev.get("source_note", "") if isinstance(latest_rev, dict) else ""
+    gross_margin = _safe_get(financials, "gross_margin", "value")
+    ebitda_margin = _safe_get(financials, "ebitda", "margin")
+    ebitda_amount = _safe_get(financials, "ebitda", "amount")
 
-    employee_count = company.get("employee_count", {})
+    employee_count = company.get("employee_count") or {}
     if isinstance(employee_count, dict):
         emp_val = employee_count.get("value", "N/A")
     else:
@@ -357,7 +365,7 @@ def assemble_html(brand_name, domain, batches, research, report_id):
     brand_positioning = company.get("brand_positioning", "")
 
     # Trustpilot
-    tp = sentiment.get("trustpilot", {})
+    tp = sentiment.get("trustpilot") or {}
     tp_rating = tp.get("rating", "N/A")
     tp_reviews = tp.get("reviews", "N/A")
     if isinstance(tp_reviews, int) and tp_reviews >= 1000:
