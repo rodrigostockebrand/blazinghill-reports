@@ -458,6 +458,9 @@ def assemble_html(brand_name, domain, batches, research, report_id):
     # ── Enhanced API Data Charts (DataForSEO) ────────────────────────────────
     dataforseo_charts_html = _build_dataforseo_charts(research)
 
+    # ── Brand name for access gate ────────────────────────────────────────────
+    brand_name_upper = brand_name.upper().strip()
+
     # ── Full HTML document ─────────────────────────────────────────────────────
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -494,6 +497,7 @@ def assemble_html(brand_name, domain, batches, research, report_id):
   --gray-700: #334155;
   --gray-800: #1e293b;
   --sidebar-w: 260px;
+  --chatpane-w: 380px;
   --header-h: 0px;
 }}
 
@@ -1300,7 +1304,210 @@ a.cite:hover {{ background: #dbeafe; text-decoration: none; }}
   font-size: 13px; line-height: 1.6;
 }}
 
+/* ── RIGHT PANE: AI CHATBOT ── */
+#chatPane {{
+  position: fixed;
+  top: 0; right: 0;
+  width: var(--chatpane-w);
+  height: 100vh;
+  background: #fff;
+  border-left: 1px solid var(--gray-200);
+  display: flex;
+  flex-direction: column;
+  z-index: 99;
+  box-shadow: -2px 0 12px rgba(0,0,0,0.04);
+  transition: transform 0.3s ease;
+}}
+#chatPane.collapsed {{
+  transform: translateX(100%);
+}}
+body.chat-open #main {{
+  margin-right: var(--chatpane-w);
+}}
+body.chat-open .report-footer {{
+  margin-right: var(--chatpane-w);
+}}
+
+.chat-header {{
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--gray-200);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--gray-50);
+  flex-shrink: 0;
+}}
+.chat-header-logo {{
+  width: 28px; height: 28px;
+  background: var(--navy);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+}}
+.chat-header-logo svg {{
+  width: 16px; height: 16px; fill: #fff;
+}}
+.chat-header-title {{
+  flex: 1;
+}}
+.chat-header-title h3 {{
+  font-size: 13px; font-weight: 700; color: var(--navy); margin: 0; line-height: 1.3;
+}}
+.chat-header-title span {{
+  font-size: 11px; color: var(--gray-500); font-weight: 400;
+}}
+.chat-close-btn {{
+  background: none; border: none; cursor: pointer; padding: 4px;
+  color: var(--gray-400); font-size: 18px; line-height: 1;
+  border-radius: 6px; transition: background 0.15s;
+}}
+.chat-close-btn:hover {{ background: var(--gray-100); color: var(--gray-600); }}
+
+.chat-messages {{
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}}
+.chat-msg {{
+  max-width: 92%;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--gray-800);
+}}
+.chat-msg.user {{
+  align-self: flex-end;
+  background: var(--navy);
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 14px 14px 4px 14px;
+}}
+.chat-msg.assistant {{
+  align-self: flex-start;
+  background: var(--gray-50);
+  padding: 12px 16px;
+  border-radius: 4px 14px 14px 14px;
+  border: 1px solid var(--gray-200);
+}}
+.chat-msg.assistant p {{ margin: 0 0 8px 0; }}
+.chat-msg.assistant p:last-child {{ margin-bottom: 0; }}
+.chat-msg.assistant strong {{ font-weight: 700; color: var(--navy); }}
+.chat-msg.assistant ul, .chat-msg.assistant ol {{
+  margin: 4px 0 8px 18px; padding: 0;
+}}
+.chat-msg.assistant li {{ margin-bottom: 4px; }}
+.chat-msg.assistant a {{ color: var(--blue); text-decoration: underline; }}
+.chat-msg.assistant code {{
+  background: var(--gray-100); padding: 1px 5px; border-radius: 4px;
+  font-size: 12px;
+}}
+.chat-citations {{
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--gray-200);
+  font-size: 11px; color: var(--gray-500);
+}}
+.chat-citations a {{
+  color: var(--gray-500); text-decoration: underline;
+}}
+.chat-citations a:hover {{ color: var(--blue); }}
+.chat-typing {{
+  display: flex; gap: 4px; padding: 8px 0; align-self: flex-start;
+}}
+.chat-typing span {{
+  width: 6px; height: 6px; border-radius: 50%; background: var(--gray-300);
+  animation: chatBounce 1.2s infinite;
+}}
+.chat-typing span:nth-child(2) {{ animation-delay: 0.2s; }}
+.chat-typing span:nth-child(3) {{ animation-delay: 0.4s; }}
+@keyframes chatBounce {{
+  0%, 60%, 100% {{ transform: translateY(0); }}
+  30% {{ transform: translateY(-6px); }}
+}}
+
+.chat-input-area {{
+  padding: 12px 16px;
+  border-top: 1px solid var(--gray-200);
+  background: #fff;
+  flex-shrink: 0;
+}}
+.chat-input-row {{
+  display: flex; gap: 8px; align-items: flex-end;
+}}
+.chat-input-row textarea {{
+  flex: 1;
+  resize: none;
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  max-height: 120px;
+  min-height: 42px;
+  color: var(--navy);
+  background: var(--gray-50);
+  outline: none;
+  transition: border-color 0.2s;
+}}
+.chat-input-row textarea:focus {{ border-color: var(--blue); background: #fff; }}
+.chat-input-row textarea::placeholder {{ color: var(--gray-400); }}
+.chat-send-btn {{
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  border: none;
+  background: var(--navy);
+  color: #fff;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}}
+.chat-send-btn:hover {{ background: #243347; }}
+.chat-send-btn:disabled {{ opacity: 0.4; cursor: not-allowed; }}
+.chat-send-btn svg {{ width: 16px; height: 16px; fill: currentColor; }}
+.chat-powered {{
+  text-align: center; font-size: 10px; color: var(--gray-400);
+  margin-top: 6px; letter-spacing: 0.02em;
+}}
+
+/* Chat toggle button (when collapsed) */
+#chatToggle {{
+  position: fixed;
+  bottom: 24px; right: 24px;
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  background: var(--navy);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 101;
+  transition: transform 0.2s, box-shadow 0.2s;
+}}
+#chatToggle:hover {{ transform: scale(1.08); box-shadow: 0 6px 20px rgba(0,0,0,0.25); }}
+#chatToggle svg {{ width: 22px; height: 22px; fill: #fff; }}
+body.chat-open #chatToggle {{ display: none; }}
+
+/* Suggested prompts */
+.chat-suggestions {{
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 0;
+}}
+.chat-suggestion-btn {{
+  background: var(--gray-50); border: 1px solid var(--gray-200);
+  border-radius: 8px; padding: 8px 12px;
+  font-size: 12px; color: var(--gray-600);
+  cursor: pointer; text-align: left;
+  transition: background 0.15s, border-color 0.15s;
+  font-family: inherit;
+}}
+.chat-suggestion-btn:hover {{ background: var(--gray-100); border-color: var(--gray-300); }}
+
 /* ── RESPONSIVE ── */
+@media (max-width: 1200px) {{
+  #chatPane {{ width: 340px; }}
+  :root {{ --chatpane-w: 340px; }}
+}}
 @media (max-width: 900px) {{
   #sidebar {{ transform: translateX(-100%); transition: transform 0.3s; }}
   #sidebar.open {{ transform: translateX(0); }}
@@ -1313,6 +1520,9 @@ a.cite:hover {{ background: #dbeafe; text-decoration: none; }}
   .scenarios {{ grid-template-columns: 1fr; }}
   .report-header h1 {{ font-size: 22px; }}
   .kpi-strip {{ flex-direction: column; }}
+  #chatPane {{ width: 100%; }}
+  body.chat-open #main {{ margin-right: 0; }}
+  body.chat-open .report-footer {{ margin-right: 0; }}
 }}
 @media (max-width: 500px) {{
   .kpi-grid {{ grid-template-columns: 1fr; }}
@@ -1334,7 +1544,7 @@ a.cite:hover {{ background: #dbeafe; text-decoration: none; }}
       <div class="report-gate-status" id="gateStatus"></div>
     </div>
     <div class="gate-hint">
-      <div>Report: <strong>{brand_name.upper()}</strong></div>
+      <div>Access code: <strong>{brand_name_upper}</strong></div>
       <a href="#" class="gate-back" onclick="document.getElementById('reportGate').style.display='none';return false;">
         Skip (demo mode)
       </a>
@@ -1361,6 +1571,45 @@ a.cite:hover {{ background: #dbeafe; text-decoration: none; }}
     Report ID: {report_id}
   </div>
 </nav>
+
+<!-- ── AI CHATBOT TOGGLE BUTTON ── -->
+<button id="chatToggle" onclick="toggleChat()" title="Ask AI about this report">
+  <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12zM7 9h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z"/></svg>
+</button>
+
+<!-- ── AI CHATBOT RIGHT PANE ── -->
+<div id="chatPane" class="collapsed">
+  <div class="chat-header">
+    <div class="chat-header-logo">
+      <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+    </div>
+    <div class="chat-header-title">
+      <h3>Research Assistant</h3>
+      <span>Powered by Perplexity AI · Live search</span>
+    </div>
+    <button class="chat-close-btn" onclick="toggleChat()" title="Close">&#215;</button>
+  </div>
+  <div class="chat-messages" id="chatMessages">
+    <div class="chat-msg assistant">
+      <p>I'm your AI research assistant for this <strong>{brand_name}</strong> due diligence report. I have access to the report data and can search the web in real time.</p>
+      <div class="chat-suggestions" id="chatSuggestions">
+        <button class="chat-suggestion-btn" onclick="sendSuggestion(this)">What are the key risks for {brand_name}?</button>
+        <button class="chat-suggestion-btn" onclick="sendSuggestion(this)">Summarize the financial performance</button>
+        <button class="chat-suggestion-btn" onclick="sendSuggestion(this)">What's the latest news about {brand_name}?</button>
+        <button class="chat-suggestion-btn" onclick="sendSuggestion(this)">How does {brand_name} compare to competitors?</button>
+      </div>
+    </div>
+  </div>
+  <div class="chat-input-area">
+    <div class="chat-input-row">
+      <textarea id="chatInput" rows="1" placeholder="Ask about {brand_name}..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){{event.preventDefault();sendChat();}}"></textarea>
+      <button class="chat-send-btn" id="chatSendBtn" onclick="sendChat()" title="Send">
+        <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+      </button>
+    </div>
+    <div class="chat-powered">Real-time research by Perplexity AI</div>
+  </div>
+</div>
 
 <!-- ── LIGHTBOX ── -->
 <div id="lightbox-overlay" onclick="closeLightbox()">
@@ -1448,7 +1697,8 @@ a.cite:hover {{ background: #dbeafe; text-decoration: none; }}
    ═══════════════════════════════════════════════════════ */
 
 // ── Access Gate ────────────────────────────────────────
-var VALID_CODES = ['MELLER2026', 'BLAZINGHILL', 'BH2025', 'BH2026', 'DD2025', 'DD2026'];
+var REPORT_BRAND = '{brand_name_upper}';
+var VALID_CODES = [REPORT_BRAND, REPORT_BRAND.replace(/\s+/g, ''), 'BLAZINGHILL'];
 
 function checkGate() {{
   var val = document.getElementById('gateInput').value.trim().toUpperCase();
@@ -1698,6 +1948,130 @@ document.querySelectorAll('.sidebar-nav a[href^="#"]').forEach(function(link) {{
       document.getElementById('overlay').classList.remove('active');
     }}
   }});
+}});
+
+// ── AI Chatbot ──────────────────────────────────────────
+var chatHistory = [];
+var CHAT_API = '/api/chat';
+var CHAT_BRAND = '{brand_name}';
+var CHAT_DOMAIN = '{domain}';
+
+function toggleChat() {{
+  var pane = document.getElementById('chatPane');
+  pane.classList.toggle('collapsed');
+  document.body.classList.toggle('chat-open');
+  if (!pane.classList.contains('collapsed')) {{
+    document.getElementById('chatInput').focus();
+  }}
+}}
+
+function sendSuggestion(btn) {{
+  var text = btn.textContent.trim();
+  var suggestionsEl = document.getElementById('chatSuggestions');
+  if (suggestionsEl) suggestionsEl.remove();
+  sendMessage(text);
+}}
+
+function sendChat() {{
+  var input = document.getElementById('chatInput');
+  var text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  input.style.height = 'auto';
+  sendMessage(text);
+}}
+
+function sendMessage(text) {{
+  var container = document.getElementById('chatMessages');
+  var sendBtn = document.getElementById('chatSendBtn');
+
+  // Add user message
+  var userDiv = document.createElement('div');
+  userDiv.className = 'chat-msg user';
+  userDiv.textContent = text;
+  container.appendChild(userDiv);
+
+  // Add typing indicator
+  var typingDiv = document.createElement('div');
+  typingDiv.className = 'chat-typing';
+  typingDiv.id = 'chatTyping';
+  typingDiv.innerHTML = '<span></span><span></span><span></span>';
+  container.appendChild(typingDiv);
+  container.scrollTop = container.scrollHeight;
+
+  sendBtn.disabled = true;
+  chatHistory.push({{ role: 'user', content: text }});
+
+  fetch(CHAT_API, {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify({{
+      messages: chatHistory,
+      brandName: CHAT_BRAND,
+      domain: CHAT_DOMAIN
+    }})
+  }})
+  .then(function(res) {{ return res.json(); }})
+  .then(function(data) {{
+    var typing = document.getElementById('chatTyping');
+    if (typing) typing.remove();
+
+    var reply = data.reply || data.error || 'No response';
+    chatHistory.push({{ role: 'assistant', content: reply }});
+
+    var msgDiv = document.createElement('div');
+    msgDiv.className = 'chat-msg assistant';
+    msgDiv.innerHTML = formatMarkdown(reply);
+
+    if (data.citations && data.citations.length > 0) {{
+      var citDiv = document.createElement('div');
+      citDiv.className = 'chat-citations';
+      citDiv.innerHTML = 'Sources: ' + data.citations.map(function(url, i) {{
+        var d = '';
+        try {{ d = new URL(url).hostname.replace('www.', ''); }} catch(e) {{ d = url; }}
+        return '<a href="' + url + '" target="_blank">' + d + '</a>';
+      }}).join(' &middot; ');
+      msgDiv.appendChild(citDiv);
+    }}
+
+    container.appendChild(msgDiv);
+    container.scrollTop = container.scrollHeight;
+    sendBtn.disabled = false;
+    document.getElementById('chatInput').focus();
+  }})
+  .catch(function(err) {{
+    var typing = document.getElementById('chatTyping');
+    if (typing) typing.remove();
+    var errDiv = document.createElement('div');
+    errDiv.className = 'chat-msg assistant';
+    errDiv.innerHTML = '<p style="color:var(--red)">Request failed. Please try again.</p>';
+    container.appendChild(errDiv);
+    container.scrollTop = container.scrollHeight;
+    sendBtn.disabled = false;
+  }});
+}}
+
+function formatMarkdown(text) {{
+  if (!text) return '';
+  var html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/^[\-\*] (.+)/gm, '<li>$1</li>');
+  html = html.replace(/(<li>[\s\S]*?<\/li>)/g, function(m) {{ return '<ul>' + m + '</ul>'; }});
+  html = html.replace(/<\/ul>\s*<ul>/g, '');
+  html = html.split(/\n\n+/).map(function(p) {{
+    p = p.trim();
+    if (!p) return '';
+    if (p.startsWith('<ul>') || p.startsWith('<ol>') || p.startsWith('<li>')) return p;
+    return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+  }}).join('');
+  return html;
+}}
+
+document.getElementById('chatInput').addEventListener('input', function() {{
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
 }});
 
 </script>

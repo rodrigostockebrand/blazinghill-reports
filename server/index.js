@@ -172,15 +172,30 @@ app.post('/api/admin/patch-report-codes', (req, res) => {
   }
 
   let html = fs.readFileSync(indexPath, 'utf8');
+  // Extract brand name from the report HTML
+  const brandMatch = html.match(/var CHAT_BRAND = '([^']+)';/) || html.match(/Report:\s*<strong>([^<]+)<\/strong>/);
+  const brandName = brandMatch ? brandMatch[1].trim().toUpperCase() : '';
+
   const oldPattern = /var VALID_CODES\s*=\s*\[.*?\];/;
-  const newCodes = "var VALID_CODES = ['MELLER2026', 'BLAZINGHILL', 'BH2025', 'BH2026', 'DD2025', 'DD2026'];";
-  if (oldPattern.test(html)) {
-    html = html.replace(oldPattern, newCodes);
-    fs.writeFileSync(indexPath, html, 'utf8');
-    res.json({ success: true, message: 'Access codes updated' });
+  // Also handle the older REPORT_BRAND pattern
+  const oldBrandPattern = /var REPORT_BRAND\s*=\s*'[^']*';\nvar VALID_CODES\s*=\s*\[.*?\];/;
+
+  let newCodes;
+  if (brandName) {
+    newCodes = `var REPORT_BRAND = '${brandName}';\nvar VALID_CODES = [REPORT_BRAND, REPORT_BRAND.replace(/\\s+/g, ''), 'BLAZINGHILL'];`;
   } else {
-    res.json({ success: false, message: 'VALID_CODES pattern not found in report HTML' });
+    newCodes = "var VALID_CODES = ['BLAZINGHILL'];";
   }
+
+  if (oldBrandPattern.test(html)) {
+    html = html.replace(oldBrandPattern, newCodes);
+  } else if (oldPattern.test(html)) {
+    html = html.replace(oldPattern, newCodes);
+  } else {
+    return res.json({ success: false, message: 'VALID_CODES pattern not found in report HTML' });
+  }
+  fs.writeFileSync(indexPath, html, 'utf8');
+  res.json({ success: true, message: `Access codes updated for brand: ${brandName || 'unknown'}` });
 });
 
 // Report status endpoint (public, for polling)
@@ -195,6 +210,67 @@ app.get('/api/report-status/:id', (req, res) => {
   }
 
   res.json({ report });
+});
+
+// ─── Chat API: Proxy to Perplexity for report AI assistant ───
+app.post('/api/chat', async (req, res) => {
+  const PPLX_KEY = process.env.PERPLEXITY_API_KEY;
+  if (!PPLX_KEY) {
+    return res.status(503).json({ error: 'AI chat unavailable — no API key configured' });
+  }
+
+  const { messages, brandName, domain } = req.body;
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'messages array required' });
+  }
+
+  // Build system prompt with report context
+  const systemPrompt = `You are BlazingHill Research AI, an expert PE due diligence analyst assistant. You are embedded inside a confidential PE due diligence report for ${brandName || 'the target company'} (${domain || 'unknown domain'}).
+
+Your role:
+- Answer questions about the company, its financials, market position, risks, and opportunities
+- Use real-time web search to provide current, accurate data
+- Cite sources with URLs when providing data points
+- Speak with the authority and precision expected by senior PE partners
+- If asked about something in the report, reference specific sections
+- Format responses with markdown: **bold** for emphasis, bullet points for lists, and clear structure
+- Keep responses concise but thorough — PE partners value density over fluff
+- When providing financial figures, always note the source and date
+- Flag any data that may be outdated or unverified`;
+
+  try {
+    const response = await fetch('https://api.perplexity.ai/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${PPLX_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'sonar-pro',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...messages.slice(-10) // Keep last 10 messages for context window
+        ],
+        max_tokens: 2000,
+        temperature: 0.3,
+        search_recency_filter: 'month'
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('[chat] Perplexity API error:', response.status, errText);
+      return res.status(502).json({ error: 'AI service error', detail: errText.slice(0, 200) });
+    }
+
+    const data = await response.json();
+    const reply = data.choices?.[0]?.message?.content || 'No response generated.';
+    const citations = data.citations || [];
+    res.json({ reply, citations });
+  } catch (err) {
+    console.error('[chat] Error:', err.message);
+    res.status(500).json({ error: 'Chat request failed' });
+  }
 });
 
 // SPA fallback — serve index.html for unmatched routes
