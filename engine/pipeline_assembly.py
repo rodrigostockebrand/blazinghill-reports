@@ -282,6 +282,34 @@ def _build_dataforseo_charts(research):
     return "\n\n".join(charts_html)
 
 
+def _strip_markdown_fences(batches):
+    """
+    Strip markdown code fences (```html ... ```) from GPT-generated batches.
+
+    LLMs sometimes wrap their HTML output in markdown fences, e.g.:
+        ```html
+        <section>...</section>
+        ```
+    These fences must be stripped before the HTML is inserted into the page,
+    or they will render as literal text like "```html" in the final report.
+    """
+    import re as _re
+    # Pattern: opening fence with optional language tag, OR closing fence (line-anchored)
+    fence_pattern = _re.compile(r'^\s*```[a-zA-Z]*\s*$', _re.MULTILINE)
+    cleaned = []
+    for batch_html in batches:
+        if not isinstance(batch_html, str):
+            cleaned.append(batch_html)
+            continue
+        # Remove any standalone fence lines (both opening with lang tag and closing)
+        stripped = fence_pattern.sub('', batch_html)
+        # Also catch inline fences that might appear without newlines (rare but possible)
+        stripped = _re.sub(r'```html\b', '', stripped)
+        stripped = _re.sub(r'```\s*\n', '\n', stripped)
+        cleaned.append(stripped)
+    return cleaned
+
+
 def _fix_section_ids(batches):
     """
     Fix section IDs in GPT-generated batches.
@@ -368,6 +396,8 @@ def assemble_html(brand_name, domain, batches, research, report_id):
     log("Phase 3: Assembling HTML report (52 sections, McKinsey CSS, Chart.js, v2)...")
 
     # ── Fix section IDs (GPT often resets numbering per batch) ────────────────
+    batches = _strip_markdown_fences(batches)
+    log("  [assembly] Markdown code fences stripped from all batches")
     batches = _fix_section_ids(batches)
     log("  [assembly] Section IDs normalized across all batches")
 
@@ -426,17 +456,32 @@ def assemble_html(brand_name, domain, batches, research, report_id):
     latest_round_type = None
     last_round_date = None
     def _parse_money(s):
+        """Parse a money string and return value in $M (millions).
+
+        Handles formats: '$35M', '£2B', '2,500K', '500000000' (raw dollars),
+        '$6,000,000' (raw dollars with commas).
+        If no suffix AND value >= 10_000, assumes raw dollars and converts to M.
+        """
         if not s: return 0.0
         try:
-            s = str(s).replace("$", "").replace("£", "").replace("€", "").replace(",", "").strip()
-            mult = 1.0
-            if s.upper().endswith("B"):
-                mult = 1000.0; s = s[:-1]
-            elif s.upper().endswith("M"):
-                mult = 1.0; s = s[:-1]
-            elif s.upper().endswith("K"):
-                mult = 0.001; s = s[:-1]
-            return float(s) * mult  # returns £M
+            s_raw = str(s).replace("$", "").replace("£", "").replace("€", "").replace(",", "").strip()
+            if not s_raw:
+                return 0.0
+            mult = None
+            if s_raw.upper().endswith("B"):
+                mult = 1000.0; s_raw = s_raw[:-1]
+            elif s_raw.upper().endswith("M"):
+                mult = 1.0; s_raw = s_raw[:-1]
+            elif s_raw.upper().endswith("K"):
+                mult = 0.001; s_raw = s_raw[:-1]
+            val = float(s_raw)
+            if mult is None:
+                # No suffix — if the number is huge, assume raw dollars
+                if abs(val) >= 10_000:
+                    return val / 1_000_000.0  # raw dollars -> M
+                # Otherwise assume already in M
+                return val
+            return val * mult
         except Exception:
             return 0.0
     if isinstance(funding_rounds, list):
@@ -509,47 +554,62 @@ def assemble_html(brand_name, domain, batches, research, report_id):
         s = str(v).strip().upper()
         return s not in ("", "N/A", "NA", "NULL", "NONE", "0%", "0")
 
-    if _is_meaningful(gross_margin):
-        kpi2_label = "Gross Margin"
-        kpi2_value = gross_margin
-        kpi2_sub = "reported"
-    elif yoy_growth and _is_meaningful(yoy_growth):
-        kpi2_label = "Revenue Growth"
-        kpi2_value = yoy_growth
-        kpi2_sub = "YoY"
-    elif rev_cagr:
-        kpi2_label = "Revenue CAGR"
-        kpi2_value = rev_cagr
-        kpi2_sub = "multi-year"
-    elif total_funding > 0:
-        kpi2_label = "Total Funding"
-        kpi2_value = f"${total_funding:.0f}M" if total_funding < 1000 else f"${total_funding/1000:.1f}B"
-        kpi2_sub = "raised to date"
-    else:
-        kpi2_label = "Gross Margin"
-        kpi2_value = "Not disclosed"
-        kpi2_sub = "private co."
+    # Format helper: total_funding is in $M
+    def _fmt_funding(tf_m):
+        if tf_m <= 0:
+            return None
+        if tf_m < 1:
+            return f"${tf_m*1000:.0f}K"
+        if tf_m < 1000:
+            return f"${tf_m:.1f}M" if tf_m < 10 else f"${tf_m:.0f}M"
+        return f"${tf_m/1000:.1f}B"
 
+    # Build ordered candidate list for each slot; the two slots pick different
+    # labels so we never render duplicate cards.
+    funding_str = _fmt_funding(total_funding)
+
+    kpi2_candidates = []
+    if _is_meaningful(gross_margin):
+        kpi2_candidates.append(("Gross Margin", gross_margin, "reported"))
+    if yoy_growth and _is_meaningful(yoy_growth):
+        kpi2_candidates.append(("Revenue Growth", yoy_growth, "YoY"))
+    if rev_cagr:
+        kpi2_candidates.append(("Revenue CAGR", rev_cagr, "multi-year"))
+    if funding_str:
+        kpi2_candidates.append(("Total Funding", funding_str, "raised to date"))
+
+    kpi3_candidates = []
     if _is_meaningful(ebitda_amount) or _is_meaningful(ebitda_margin):
-        kpi3_label = "EBITDA"
-        kpi3_value = ebitda_amount if _is_meaningful(ebitda_amount) else (ebitda_margin or "N/A")
-        kpi3_sub = f"{ebitda_margin} margin" if _is_meaningful(ebitda_margin) else "reported"
-    elif latest_valuation and _is_meaningful(latest_valuation):
-        kpi3_label = "Last Valuation"
-        kpi3_value = latest_valuation
-        kpi3_sub = f"{latest_round_type or 'latest round'}{(' · ' + str(last_round_date)) if last_round_date else ''}"
-    elif rev_per_employee:
-        kpi3_label = "Rev / Employee"
-        kpi3_value = rev_per_employee
-        kpi3_sub = "capital efficiency"
-    elif total_funding > 0:
-        kpi3_label = "Total Funding"
-        kpi3_value = f"${total_funding:.0f}M" if total_funding < 1000 else f"${total_funding/1000:.1f}B"
-        kpi3_sub = "raised to date"
+        _ev = ebitda_amount if _is_meaningful(ebitda_amount) else (ebitda_margin or "N/A")
+        _es = f"{ebitda_margin} margin" if _is_meaningful(ebitda_margin) else "reported"
+        kpi3_candidates.append(("EBITDA", _ev, _es))
+    if latest_valuation and _is_meaningful(latest_valuation):
+        _vs = f"{latest_round_type or 'latest round'}{(' · ' + str(last_round_date)) if last_round_date else ''}"
+        kpi3_candidates.append(("Last Valuation", latest_valuation, _vs))
+    if rev_per_employee:
+        kpi3_candidates.append(("Rev / Employee", rev_per_employee, "capital efficiency"))
+    if funding_str:
+        kpi3_candidates.append(("Total Funding", funding_str, "raised to date"))
+
+    # Pick kpi2 (first candidate) and kpi3 (first candidate whose label differs from kpi2)
+    if kpi2_candidates:
+        kpi2_label, kpi2_value, kpi2_sub = kpi2_candidates[0]
     else:
-        kpi3_label = "EBITDA"
-        kpi3_value = "Not disclosed"
-        kpi3_sub = "private co."
+        kpi2_label, kpi2_value, kpi2_sub = "Gross Margin", "Not disclosed", "private co."
+
+    kpi3_label = kpi3_value = kpi3_sub = None
+    for lbl, val, sub in kpi3_candidates:
+        if lbl != kpi2_label:
+            kpi3_label, kpi3_value, kpi3_sub = lbl, val, sub
+            break
+    if kpi3_label is None:
+        # Fall back to an alternate kpi2 candidate if kpi3 list was exhausted
+        for lbl, val, sub in kpi2_candidates[1:]:
+            if lbl != kpi2_label:
+                kpi3_label, kpi3_value, kpi3_sub = lbl, val, sub
+                break
+    if kpi3_label is None:
+        kpi3_label, kpi3_value, kpi3_sub = "EBITDA", "Not disclosed", "private co."
 
     if isinstance(employee_count, dict):
         emp_val = employee_count.get("value", "N/A")
