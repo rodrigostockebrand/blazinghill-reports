@@ -435,10 +435,15 @@ def assemble_html(brand_name, domain, batches, research, report_id):
     premium_data    = research.get("_premium_data") or {}
 
     latest_rev   = financials.get("latest_revenue") or {}
-    rev_amount   = latest_rev.get("amount", "N/A") if isinstance(latest_rev, dict) else "N/A"
-    rev_year     = latest_rev.get("year", "") if isinstance(latest_rev, dict) else ""
-    rev_source   = latest_rev.get("source_url", "") if isinstance(latest_rev, dict) else ""
-    rev_note     = latest_rev.get("source_note", "") if isinstance(latest_rev, dict) else ""
+    def _nn(v, default=""):
+        """Normalize None/null values from JSON to safe defaults."""
+        if v is None or (isinstance(v, str) and v.strip().lower() in ("none", "null", "n/a", "")):
+            return default
+        return v
+    rev_amount   = _nn(latest_rev.get("amount") if isinstance(latest_rev, dict) else None, "N/A")
+    rev_year     = _nn(latest_rev.get("year") if isinstance(latest_rev, dict) else None, "")
+    rev_source   = _nn(latest_rev.get("source_url") if isinstance(latest_rev, dict) else None, "")
+    rev_note     = _nn(latest_rev.get("source_note") if isinstance(latest_rev, dict) else None, "")
     gross_margin = _safe_get(financials, "gross_margin", "value")
     ebitda_margin = _safe_get(financials, "ebitda", "margin")
     ebitda_amount = _safe_get(financials, "ebitda", "amount")
@@ -705,6 +710,12 @@ def assemble_html(brand_name, domain, batches, research, report_id):
         rev_source_html = ""
     if rev_note:
         rev_source_html += f' <span class="no-source" title="{rev_note}" style="font-size:10px">ℹ updated</span>'
+
+    # Render the revenue year safely: "FY2024" only if we have a real year
+    if rev_year and str(rev_year).strip() and str(rev_year).strip().lower() not in ("none", "null", "n/a"):
+        rev_year_fmt = f"FY{rev_year}"
+    else:
+        rev_year_fmt = "Latest reported"
 
     # ── Sidebar nav ──────────────────────────────────────────────────────────
     sidebar_nav_html = _build_sidebar_nav()
@@ -1963,7 +1974,7 @@ body.chat-open #chatToggle {{ display: none; }}
     <div class="kpi-strip-item">
       <div class="kpi-strip-label">Latest Revenue</div>
       <div class="kpi-strip-value">{rev_amount}</div>
-      <div class="kpi-strip-sub">FY{rev_year}{rev_source_html}</div>
+      <div class="kpi-strip-sub">{rev_year_fmt}{rev_source_html}</div>
     </div>
     <div class="kpi-strip-item">
       <div class="kpi-strip-label">{kpi2_label}</div>
