@@ -198,6 +198,46 @@ app.post('/api/admin/patch-report-codes', (req, res) => {
   res.json({ success: true, message: `Access codes updated for brand: ${brandName || 'unknown'}` });
 });
 
+// ─── Admin: Trigger report generation ───
+app.post('/api/admin/generate-report', (req, res) => {
+  const adminKey = req.headers['x-admin-key'];
+  if (!adminKey || adminKey !== 'BH-ADMIN-2026-TEMP') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const { email, brandName, domain, market } = req.body;
+  if (!email || !brandName || !domain) {
+    return res.status(400).json({ error: 'email, brandName, domain required' });
+  }
+
+  const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const { v4: uuidv4 } = require('uuid');
+  const { runReport } = require('../engine/run_report');
+  const reportId = uuidv4();
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    INSERT INTO reports (id, user_id, brand_name, domain, market, analysis_lens, priority, status, created_at)
+    VALUES (?, ?, ?, ?, ?, 'Commercial diligence', 'Standard', 'generating', ?)
+  `).run(reportId, user.id, brandName.trim(), domain.trim(), market || 'United States', now);
+
+  runReport({
+    reportId,
+    brandName: brandName.trim(),
+    domain: domain.trim(),
+    market: market || 'United States',
+    analysisLens: 'Commercial diligence',
+    enrichmentData: null,
+  }, db).then((reportUrl) => {
+    console.log(`[admin] Report ${reportId} completed: ${reportUrl}`);
+  }).catch((err) => {
+    console.error(`[admin] Report ${reportId} failed:`, err.message);
+  });
+
+  res.status(201).json({ reportId, status: 'generating', brandName: brandName.trim(), domain: domain.trim() });
+});
+
 // Report status endpoint (public, for polling)
 app.get('/api/report-status/:id', (req, res) => {
   const report = db.prepare(`
