@@ -264,19 +264,61 @@ app.post('/api/chat', async (req, res) => {
     return res.status(400).json({ error: 'messages array required' });
   }
 
-  // Build system prompt with report context
-  const systemPrompt = `You are BlazingHill Research AI, an expert PE due diligence analyst assistant. You are embedded inside a confidential PE due diligence report for ${brandName || 'the target company'} (${domain || 'unknown domain'}).
+  // Extract root domain (e.g., tryprofound.com from https://www.tryprofound.com)
+  let cleanDomain = '';
+  let rootDomain = '';
+  if (domain) {
+    cleanDomain = String(domain).replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '').trim();
+    rootDomain = cleanDomain.split('/')[0];
+  }
+
+  const companyLabel = brandName && rootDomain
+    ? `${brandName} (the company at ${rootDomain})`
+    : (brandName || rootDomain || 'the target company');
+
+  // Build system prompt with strong company grounding
+  const systemPrompt = `You are BlazingHill Research AI, an expert private-equity due-diligence analyst embedded inside a confidential PE report on ${companyLabel}.
+
+CRITICAL CONTEXT — READ FIRST:
+- The ONLY company under discussion is ${companyLabel}.
+- Their official website is https://${rootDomain || 'unknown'}.
+- When the user says "the company", "them", "they", "this company", or uses the brand name alone (e.g., "${brandName || 'the brand'}"), they ALWAYS mean ${companyLabel} — never a different organization with a similar name.
+- If a generic word is used (e.g., a common English word that happens to be the brand), still interpret it as ${companyLabel}.
+- When searching the web, include "${brandName || ''}" AND "${rootDomain || ''}" together (or site:${rootDomain || ''}) to avoid pulling results about unrelated entities.
+- If the search results clearly do not concern ${companyLabel}, say so, then retry with a more specific query before giving up.
 
 Your role:
-- Answer questions about the company, its financials, market position, risks, and opportunities
-- Use real-time web search to provide current, accurate data
-- Cite sources with URLs when providing data points
-- Speak with the authority and precision expected by senior PE partners
-- If asked about something in the report, reference specific sections
-- Format responses with markdown: **bold** for emphasis, bullet points for lists, and clear structure
-- Keep responses concise but thorough — PE partners value density over fluff
-- When providing financial figures, always note the source and date
-- Flag any data that may be outdated or unverified`;
+- Answer questions about ${companyLabel}: financials, market position, product, team, competitors, risks, opportunities.
+- Use real-time web search (including historical data — founding dates, history, past funding rounds are all fair game).
+- Cite sources with URLs. Prefer the company's own site (${rootDomain || ''}), Crunchbase, LinkedIn, SEC filings, and reputable press.
+- Speak with the authority and precision expected by senior PE partners.
+- Format with markdown: **bold** for emphasis, bullet lists for structure.
+- Keep responses dense — PE partners value signal over fluff.
+- When citing financial figures, always note source and date. Flag outdated or unverified data.`;
+
+  // Prepend company context to the most recent user message to improve search grounding
+  const contextualizedMessages = messages.slice(-10).map((m, idx, arr) => {
+    if (idx === arr.length - 1 && m.role === 'user' && brandName && rootDomain) {
+      return {
+        role: 'user',
+        content: `[Context: question is about the company "${brandName}" whose website is ${rootDomain}. Interpret all pronouns and ambiguous references accordingly.]\n\n${m.content}`
+      };
+    }
+    return m;
+  });
+
+  // Build Perplexity request. Only apply search_domain_filter if we have a clean root domain.
+  const pplxBody = {
+    model: 'sonar-pro',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      ...contextualizedMessages
+    ],
+    max_tokens: 2000,
+    temperature: 0.2
+    // NOTE: search_recency_filter intentionally removed — it was blocking historical queries
+    // (founding dates, company history, past funding rounds, etc.).
+  };
 
   try {
     const response = await fetch('https://api.perplexity.ai/chat/completions', {
@@ -285,16 +327,7 @@ Your role:
         'Authorization': `Bearer ${PPLX_KEY}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        model: 'sonar-pro',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...messages.slice(-10) // Keep last 10 messages for context window
-        ],
-        max_tokens: 2000,
-        temperature: 0.3,
-        search_recency_filter: 'month'
-      })
+      body: JSON.stringify(pplxBody)
     });
 
     if (!response.ok) {
