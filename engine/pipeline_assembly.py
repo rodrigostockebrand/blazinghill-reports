@@ -2060,11 +2060,11 @@ function formatMarkdown(text) {{
   html = html.replace(/^[\-\*] (.+)/gm, '<li>$1</li>');
   html = html.replace(/(<li>[\s\S]*?<\/li>)/g, function(m) {{ return '<ul>' + m + '</ul>'; }});
   html = html.replace(/<\/ul>\s*<ul>/g, '');
-  html = html.split(/\n\n+/).map(function(p) {{
+  html = html.split(/\\n\\n+/).map(function(p) {{
     p = p.trim();
     if (!p) return '';
     if (p.startsWith('<ul>') || p.startsWith('<ol>') || p.startsWith('<li>')) return p;
-    return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+    return '<p>' + p.replace(/\\n/g, '<br>') + '</p>';
   }}).join('');
   return html;
 }}
