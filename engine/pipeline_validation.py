@@ -66,8 +66,9 @@ def _fetch_trustpilot_data(brand_name, domain, pplx_system):
         f"You are a research assistant. Today's date is {__import__('datetime').datetime.now().strftime('%B %d, %Y')}. "
         "Find the Trustpilot rating for the requested brand. "
         "Return the EXACT star rating (e.g. 4.2 out of 5) and EXACT total review count. "
-        "Also list the top 3 praise themes and top 3 complaint themes from reviews. "
-        "Include the direct URL to the Trustpilot review page."
+        "Only include praise/complaint themes if you can cite actual quoted reviews from Trustpilot for this specific company. "
+        "If the company does not have a Trustpilot page, or has fewer than 10 reviews, explicitly say so — do not invent themes. "
+        "Never fabricate quotes. Never assume the business is e-commerce (shipping, stock, payment) unless you have direct evidence."
     )
 
     tp_user = f"""Search Trustpilot for {brand_name}.
@@ -79,14 +80,17 @@ Search queries to use:
 2. {tp_query_2}
 3. {tp_query_3}
 
-Report:
-- Exact star rating (X.X / 5.0)
-- Total review count (exact integer)
-- Top 3 praise themes (with example customer quote if available)
-- Top 3 complaint themes (with example customer quote if available)
+Report ONLY what you can verify:
+- Exact star rating (X.X / 5.0) — only if Trustpilot page exists
+- Total review count (exact integer) — only if Trustpilot page exists
+- Top praise themes: ONLY include if you can quote real reviews from this company's Trustpilot page. Each theme MUST have a real quote from that page.
+- Top complaint themes: same rule. Only include if real quotes exist.
 - Source URL (should be trustpilot.com/review/{domain})
 
-If you cannot find a Trustpilot page for {brand_name}, say so explicitly."""
+IMPORTANT:
+- If {brand_name} has no Trustpilot page, or has < 10 reviews, return rating=null, reviews=null, and empty theme arrays.
+- Do NOT output generic themes like "fast shipping", "out of stock", "payment options" unless those are literal quotes from real reviews of THIS company.
+- Many B2B, SaaS, and lead-generation companies (e.g. enterprise software that generates demos via sales reps) have no Trustpilot presence — in that case, return empty results rather than guessing."""
 
     try:
         content, cites = _perplexity_call(tp_system, tp_user, max_tokens=2000)
@@ -117,27 +121,28 @@ If you cannot find a Trustpilot page for {brand_name}, say so explicitly."""
 Available source URLs:
 {cite_text if cite_text else '  (none)'}
 
-Return JSON:
+Return JSON with this exact structure:
 {{
   "rating": 4.2,
   "reviews": 12500,
   "praise_themes": [
-    {{"theme": "Fast delivery", "quote": "example quote or null"}},
-    {{"theme": "Great quality", "quote": "example quote or null"}},
-    {{"theme": "Easy returns", "quote": "example quote or null"}}
+    {{"theme": "short theme name", "quote": "verbatim quote from a real review"}}
   ],
   "complaint_themes": [
-    {{"theme": "Sizing issues", "quote": "example quote or null"}},
-    {{"theme": "Slow customer service", "quote": "example quote or null"}},
-    {{"theme": "Delivery delays", "quote": "example quote or null"}}
+    {{"theme": "short theme name", "quote": "verbatim quote from a real review"}}
   ],
   "source_url": "{tp_source_url}"
 }}
 
-Rules:
-- rating must be a float (e.g. 4.2), not a string
-- reviews must be an integer, not a string
-- If Trustpilot page not found, set rating and reviews to null"""
+STRICT RULES — follow exactly:
+1. rating must be a float (e.g. 4.2), or null if not found.
+2. reviews must be an integer, or null if not found.
+3. praise_themes and complaint_themes: include ONLY items that have a real verbatim quote from an actual Trustpilot review of THIS company.
+4. If the research text does NOT contain verbatim customer quotes for this company, return empty arrays [].
+5. DO NOT copy or paraphrase the example themes from the original prompt ("Fast delivery", "Sizing issues", "Delivery delays", "Slow customer service", "Easy returns", "Great quality", etc.). These were illustrative placeholders, not real findings.
+6. If the company is B2B / SaaS / lead-gen and shipping/stock/payment themes are clearly not applicable, return empty arrays.
+7. Never invent quotes. A theme without a real quote must be dropped.
+8. If Trustpilot page not found at all, set rating=null, reviews=null, praise_themes=[], complaint_themes=[]."""
 
     try:
         gpt_resp = _gpt_call(extract_system, extract_user, max_tokens=800)

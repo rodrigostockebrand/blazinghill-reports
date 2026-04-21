@@ -162,13 +162,23 @@ def _get_section_instructions(sid, num, title):
 - A Chart.js line chart: market size projection (current year + 5 years)""",
 
         "s11": """Write Customer Sentiment section. Include:
-- Trustpilot score prominently (large KPI card), total reviews, year-over-year trend
-- Top praise themes (3) with example customer quotes in blockquotes
-- Top complaint themes (3) with example customer quotes in blockquotes
-- Net Promoter Score estimate
-- Sentiment vs competitors comparison
-- A Chart.js bar chart: star rating distribution (1-5 stars)
-- A Chart.js doughnut: sentiment split (positive/neutral/negative)""",
+- Trustpilot score prominently (large KPI card IF rating exists), total reviews
+- Top praise themes and complaint themes — ONLY if the research data actually
+  contains verbatim review quotes for this company. If it does not, DO NOT
+  invent themes. Instead write a short callout.info box stating
+  "Trustpilot / public review data insufficient for theme analysis — recommend
+  management supply NPS surveys and CSAT data during DD."
+- NEVER output e-commerce boilerplate themes (fast shipping, out of stock,
+  payment options, delivery delays, sizing issues) unless the research
+  explicitly contains those quotes for THIS company.
+- For B2B / SaaS / lead-generation / enterprise companies where end users
+  do not leave consumer reviews, replace Trustpilot themes with: sales-cycle
+  indicators, G2/Capterra ratings if present in research, and LinkedIn
+  employee sentiment (Glassdoor rating if available).
+- NPS estimate only if supported by research.
+- Sentiment vs competitors comparison (only with real data)
+- A Chart.js bar chart: star rating distribution (1-5 stars) — ONLY if
+  per-star breakdown is in the research. Otherwise skip this chart.""",
 
         "s12": """Write Content Strategy Gap section. Include:
 - Current content output assessment (blog, video, UGC, influencer)
@@ -616,6 +626,12 @@ Chart JSON rules:
   * plugins.datalabels with display:true, anchor:"end", align:"top"
   * For doughnut/pie: datalabels formatter showing percentage
   * scales (bar/line): x and y axis titles via title.display:true, title.text:"Label"
+- BUBBLE / SCATTER CHARTS:
+  * Each data point MUST be an object: {{"x": N, "y": N, "r": N}} (r is radius in px, 5-25)
+  * Each dataset MUST include a "labels" array parallel to "data" so points are labeled.
+    Example: "data": [{{"x":3,"y":4,"r":15}}, {{"x":2,"y":3,"r":10}}], "labels": ["Supply Chain", "FX Risk"]
+  * The top-level data.labels array should also list each point's name in the same order.
+  * DO NOT put objects inside data.labels — labels are strings only.
 - Colors: ["#2563eb","#16a34a","#d97706","#dc2626","#7c3aed","#06b6d4","#ec4899"]
 - Backgrounds: hex with alpha "#2563eb80"
 - NEVER use JS expressions — only literal values

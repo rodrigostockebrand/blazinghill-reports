@@ -221,28 +221,62 @@ def _build_dataforseo_charts(research):
   <figcaption>Traffic Estimation | Source: DataForSEO API</figcaption>
 </section>""")
 
-    # ── Content Sentiment Analysis Chart ──
+    # ── Content Sentiment Analysis ──
+    # Only render a sentiment chart when we have enough citations to be meaningful
+    # (>= 10). A pie chart with 1 neutral citation is misleading, not signal.
     content = dfse.get("content_citations")
-    if content and isinstance(content, list) and len(content) > 0:
+    MIN_CITATIONS_FOR_CHART = 10
+    if content and isinstance(content, list) and len(content) >= MIN_CITATIONS_FOR_CHART:
         pos = sum(1 for c in content if _safe_get(c, "sentiment", "polarity", default=0) > 0.1)
         neu = sum(1 for c in content if -0.1 <= _safe_get(c, "sentiment", "polarity", default=0) <= 0.1)
         neg = sum(1 for c in content if _safe_get(c, "sentiment", "polarity", default=0) < -0.1)
-        if pos + neu + neg > 0:
+        total = pos + neu + neg
+        # Also require actual variance — if 100% neutral, it tells us nothing
+        has_variance = (pos > 0 or neg > 0)
+        if total > 0 and has_variance:
+            # Horizontal stacked bar: more readable than a donut for 3-category sentiment
             chart_cfg = _json.dumps({
-                "type": "doughnut",
-                "data": {"labels": [f"Positive ({pos})", f"Neutral ({neu})", f"Negative ({neg})"],
-                         "datasets": [{"data": [pos, neu, neg],
-                                       "backgroundColor": ["#16a34a", "#94a3b8", "#dc2626"],
-                                       "borderColor": "#fff", "borderWidth": 2}]},
-                "options": {"responsive": True, "cutout": "60%",
-                            "plugins": {"legend": {"position": "bottom"}, "datalabels": {"display": True, "color": "#fff", "font": {"weight": "bold"}}}}
+                "type": "bar",
+                "data": {
+                    "labels": ["Brand Sentiment"],
+                    "datasets": [
+                        {"label": f"Positive ({pos})", "data": [pos], "backgroundColor": "#16a34a"},
+                        {"label": f"Neutral ({neu})",  "data": [neu], "backgroundColor": "#94a3b8"},
+                        {"label": f"Negative ({neg})", "data": [neg], "backgroundColor": "#dc2626"},
+                    ]
+                },
+                "options": {
+                    "responsive": True, "maintainAspectRatio": True, "aspectRatio": 4,
+                    "indexAxis": "y",
+                    "plugins": {
+                        "legend": {"position": "bottom"},
+                        "datalabels": {"display": True, "color": "#fff", "font": {"weight": "bold", "size": 12}},
+                        "tooltip": {"callbacks": {}}
+                    },
+                    "scales": {
+                        "x": {"stacked": True, "title": {"display": True, "text": f"Citations analyzed ({total})"}},
+                        "y": {"stacked": True, "display": False}
+                    }
+                }
             })
             charts_html.append(f"""<section class="section" id="s52-sentiment">
   <div class="section-label">API Data</div>
-  <h2>Brand Sentiment Analysis</h2>
-  <p class="section-intro">Content sentiment analysis from DataForSEO content analysis API.</p>
+  <h2>Brand Sentiment — Web Citation Analysis</h2>
+  <p class="section-intro">Sentiment distribution across <strong>{total}</strong> web citations mentioning the brand, from the DataForSEO content analysis API. Negative/positive classification is based on natural-language polarity scoring.</p>
   <div class="chart-container" data-chart='{chart_cfg}'></div>
-  <figcaption>Brand Sentiment | Source: DataForSEO Content Analysis API</figcaption>
+  <figcaption>Brand Sentiment across {total} web citations | Source: DataForSEO Content Analysis API</figcaption>
+</section>""")
+    elif content and isinstance(content, list) and len(content) > 0:
+        # Too few data points for a sentiment chart — show a transparent note instead
+        cite_count = len(content)
+        charts_html.append(f"""<section class="section" id="s52-sentiment">
+  <div class="section-label">API Data</div>
+  <h2>Brand Sentiment — Web Citation Analysis</h2>
+  <p class="section-intro">The DataForSEO content analysis API returned only <strong>{cite_count}</strong> citation{'' if cite_count == 1 else 's'} for this brand — insufficient sample size for a reliable sentiment distribution. We do not render a chart for data sets below {MIN_CITATIONS_FOR_CHART} citations.</p>
+  <div class="callout info"><span class="callout-icon">ℹ</span>
+    <div><strong>Recommended DD action:</strong> Request internal NPS survey results, customer CSAT tracking, Glassdoor/G2/Capterra snapshots, and Google Reviews export from management. These sources typically carry materially higher sample sizes and more actionable signal for PE diligence than unstructured web-citation sentiment.</div>
+  </div>
+  <figcaption>Source: DataForSEO Content Analysis API ({cite_count} citation{'' if cite_count == 1 else 's'})</figcaption>
 </section>""")
 
     return "\n\n".join(charts_html)
@@ -337,6 +371,32 @@ def assemble_html(brand_name, domain, batches, research, report_id):
     batches = _fix_section_ids(batches)
     log("  [assembly] Section IDs normalized across all batches")
 
+    # ── Guarantee every nav anchor resolves to a real section ────────────
+    # If a batch failed to generate s47/s48 etc., the sidebar link scrolls to
+    # nowhere. Find which section IDs are missing from the assembled HTML and
+    # append a lightweight placeholder for each one so links always work.
+    import re as _re_nav
+    from pipeline_sections import SECTIONS as _ALL_SECTIONS
+    _combined = "\n".join(batches)
+    _found_ids = set(_re_nav.findall(r'<section\b[^>]*\bid=["\'](s\d{1,2})["\']', _combined, _re_nav.IGNORECASE))
+    _missing_placeholders = []
+    for _sid, _snum, _stitle in _ALL_SECTIONS:
+        if _sid == "s52":
+            continue  # s52 is built separately (Data Integrity)
+        if _sid not in _found_ids:
+            _missing_placeholders.append(
+                f"""<section class="section" id="{_sid}">
+  <div class="section-label">Section {_snum}</div>
+  <h2>{_stitle}</h2>
+  <div class="callout info"><span class="callout-icon">ℹ</span>
+    <div><strong>Section not generated.</strong> This section was deferred due to insufficient data or a generation timeout. Recommend requesting this analysis directly from management during diligence, or re-running the report to populate.</div>
+  </div>
+</section>"""
+            )
+    if _missing_placeholders:
+        log(f"  [assembly] Adding {len(_missing_placeholders)} placeholder sections for missing IDs")
+        batches.append("\n".join(_missing_placeholders))
+
     # ── Extract key data (use 'or' to handle None values) ─────────────────────
     company     = research.get("company") or {}
     financials  = research.get("financials") or {}
@@ -353,7 +413,144 @@ def assemble_html(brand_name, domain, batches, research, report_id):
     ebitda_margin = _safe_get(financials, "ebitda", "margin")
     ebitda_amount = _safe_get(financials, "ebitda", "amount")
 
+    # Employee count is needed for Rev / Employee calc below
     employee_count = company.get("employee_count") or {}
+
+    # ── Alternative PE metrics (used when GM/EBITDA not available) ─────
+    # For most private companies, gross margin & EBITDA are NOT publicly
+    # disclosed. Rather than showing N/A cards, we compute more reliable
+    # PE-relevant metrics from data we actually have.
+    funding_rounds = financials.get("funding_rounds") or []
+    total_funding = 0.0
+    latest_valuation = None
+    latest_round_type = None
+    last_round_date = None
+    def _parse_money(s):
+        if not s: return 0.0
+        try:
+            s = str(s).replace("$", "").replace("£", "").replace("€", "").replace(",", "").strip()
+            mult = 1.0
+            if s.upper().endswith("B"):
+                mult = 1000.0; s = s[:-1]
+            elif s.upper().endswith("M"):
+                mult = 1.0; s = s[:-1]
+            elif s.upper().endswith("K"):
+                mult = 0.001; s = s[:-1]
+            return float(s) * mult  # returns £M
+        except Exception:
+            return 0.0
+    if isinstance(funding_rounds, list):
+        for r in funding_rounds:
+            if isinstance(r, dict):
+                total_funding += _parse_money(r.get("amount"))
+        # Use most recent round for valuation (last in list; otherwise sort by date)
+        dated = [r for r in funding_rounds if isinstance(r, dict) and r.get("date")]
+        if dated:
+            dated.sort(key=lambda r: str(r.get("date", "")), reverse=True)
+            latest = dated[0]
+            latest_valuation = latest.get("post_money_valuation")
+            latest_round_type = latest.get("round")
+            last_round_date = latest.get("date")
+        elif funding_rounds:
+            last_r = funding_rounds[-1]
+            if isinstance(last_r, dict):
+                latest_valuation = last_r.get("post_money_valuation")
+                latest_round_type = last_r.get("round")
+                last_round_date = last_r.get("date")
+
+    # Revenue growth (YoY from revenue_history)
+    rev_history = financials.get("revenue_history") or []
+    yoy_growth = None
+    rev_cagr = None
+    if isinstance(rev_history, list) and len(rev_history) >= 2:
+        try:
+            sorted_rev = sorted(
+                [r for r in rev_history if isinstance(r, dict) and r.get("year")],
+                key=lambda r: r.get("year")
+            )
+            if len(sorted_rev) >= 2:
+                last = _parse_money(sorted_rev[-1].get("revenue"))
+                prev = _parse_money(sorted_rev[-2].get("revenue"))
+                if prev > 0:
+                    yoy_growth = f"{((last - prev) / prev * 100):.0f}%"
+                # CAGR over full window
+                first = _parse_money(sorted_rev[0].get("revenue"))
+                yrs = sorted_rev[-1]["year"] - sorted_rev[0]["year"]
+                if first > 0 and yrs > 0:
+                    rev_cagr = f"{(((last / first) ** (1/yrs) - 1) * 100):.0f}%"
+        except Exception:
+            pass
+    # Also check if growth_yoy is on the latest_revenue record directly
+    if not yoy_growth:
+        direct_yoy = latest_rev.get("growth_yoy") if isinstance(latest_rev, dict) else None
+        if direct_yoy:
+            yoy_growth = direct_yoy
+
+    # Revenue per employee (capital efficiency proxy)
+    rev_per_employee = None
+    try:
+        if isinstance(latest_rev, dict):
+            rev_m = _parse_money(latest_rev.get("amount"))
+            emp_num = None
+            if isinstance(employee_count, dict) and isinstance(employee_count.get("value"), (int, float)):
+                emp_num = employee_count.get("value")
+            elif isinstance(employee_count, (int, float)):
+                emp_num = employee_count
+            if rev_m > 0 and emp_num and emp_num > 0:
+                rev_per_employee = f"${(rev_m * 1000 / emp_num):.0f}K"  # rev_m is in M -> *1000 = K
+        pass
+    except Exception:
+        pass
+
+    # Choose KPI strip cards #2 and #3 (Gross Margin & EBITDA slots)
+    # If we have real GM/EBITDA, use them. Otherwise use best-available PE metrics.
+    def _is_meaningful(v):
+        if v is None: return False
+        s = str(v).strip().upper()
+        return s not in ("", "N/A", "NA", "NULL", "NONE", "0%", "0")
+
+    if _is_meaningful(gross_margin):
+        kpi2_label = "Gross Margin"
+        kpi2_value = gross_margin
+        kpi2_sub = "reported"
+    elif yoy_growth and _is_meaningful(yoy_growth):
+        kpi2_label = "Revenue Growth"
+        kpi2_value = yoy_growth
+        kpi2_sub = "YoY"
+    elif rev_cagr:
+        kpi2_label = "Revenue CAGR"
+        kpi2_value = rev_cagr
+        kpi2_sub = "multi-year"
+    elif total_funding > 0:
+        kpi2_label = "Total Funding"
+        kpi2_value = f"${total_funding:.0f}M" if total_funding < 1000 else f"${total_funding/1000:.1f}B"
+        kpi2_sub = "raised to date"
+    else:
+        kpi2_label = "Gross Margin"
+        kpi2_value = "Not disclosed"
+        kpi2_sub = "private co."
+
+    if _is_meaningful(ebitda_amount) or _is_meaningful(ebitda_margin):
+        kpi3_label = "EBITDA"
+        kpi3_value = ebitda_amount if _is_meaningful(ebitda_amount) else (ebitda_margin or "N/A")
+        kpi3_sub = f"{ebitda_margin} margin" if _is_meaningful(ebitda_margin) else "reported"
+    elif latest_valuation and _is_meaningful(latest_valuation):
+        kpi3_label = "Last Valuation"
+        kpi3_value = latest_valuation
+        kpi3_sub = f"{latest_round_type or 'latest round'}{(' · ' + str(last_round_date)) if last_round_date else ''}"
+    elif rev_per_employee:
+        kpi3_label = "Rev / Employee"
+        kpi3_value = rev_per_employee
+        kpi3_sub = "capital efficiency"
+    elif total_funding > 0:
+        kpi3_label = "Total Funding"
+        kpi3_value = f"${total_funding:.0f}M" if total_funding < 1000 else f"${total_funding/1000:.1f}B"
+        kpi3_sub = "raised to date"
+    else:
+        kpi3_label = "EBITDA"
+        kpi3_value = "Not disclosed"
+        kpi3_sub = "private co."
+
     if isinstance(employee_count, dict):
         emp_val = employee_count.get("value", "N/A")
     else:
@@ -764,6 +961,70 @@ h3.subsection {{
 .mt-sm {{ margin-top: 8px; }}
 .mt-md {{ margin-top: 16px; }}
 .mt-lg {{ margin-top: 32px; }}
+
+/* ── TYPOGRAPHY INSIDE GENERATED SECTIONS (McKinsey-grade spacing) ── */
+.section p {{
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: var(--gray-700);
+  margin: 0 0 14px 0;
+}}
+.section p:last-child {{ margin-bottom: 0; }}
+.section h3 {{
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--navy);
+  margin: 28px 0 10px;
+  letter-spacing: -0.005em;
+}}
+.section h4 {{
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--navy);
+  margin: 22px 0 8px;
+}}
+.section h5, .section h6 {{
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gray-700);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 18px 0 6px;
+}}
+.section ul, .section ol {{
+  margin: 4px 0 18px 22px;
+  padding-left: 4px;
+}}
+.section ul li, .section ol li {{
+  font-size: 14.5px;
+  line-height: 1.7;
+  color: var(--gray-700);
+  margin-bottom: 6px;
+}}
+.section ul li::marker {{ color: var(--blue); }}
+.section li > p {{ margin-bottom: 4px; }}
+.section li > ul, .section li > ol {{ margin-top: 4px; margin-bottom: 6px; }}
+.section blockquote {{
+  border-left: 3px solid var(--blue);
+  padding: 2px 0 2px 14px;
+  margin: 12px 0 16px;
+  color: var(--gray-700);
+  font-style: italic;
+  background: var(--gray-50);
+}}
+.section strong, .section b {{ color: var(--navy); font-weight: 700; }}
+.section code {{
+  background: var(--gray-100);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12.5px;
+  color: var(--gray-800);
+}}
+.section hr {{
+  border: none;
+  border-top: 1px solid var(--gray-200);
+  margin: 24px 0;
+}}
 
 /* ── TWO-COLUMN LAYOUT ── */
 .two-col {{
@@ -1645,14 +1906,14 @@ body.chat-open #chatToggle {{ display: none; }}
       <div class="kpi-strip-sub">FY{rev_year}{rev_source_html}</div>
     </div>
     <div class="kpi-strip-item">
-      <div class="kpi-strip-label">Gross Margin</div>
-      <div class="kpi-strip-value">{gross_margin}</div>
-      <div class="kpi-strip-sub">reported</div>
+      <div class="kpi-strip-label">{kpi2_label}</div>
+      <div class="kpi-strip-value">{kpi2_value}</div>
+      <div class="kpi-strip-sub">{kpi2_sub}</div>
     </div>
     <div class="kpi-strip-item">
-      <div class="kpi-strip-label">EBITDA</div>
-      <div class="kpi-strip-value">{ebitda_amount}</div>
-      <div class="kpi-strip-sub">{ebitda_margin} margin</div>
+      <div class="kpi-strip-label">{kpi3_label}</div>
+      <div class="kpi-strip-value">{kpi3_value}</div>
+      <div class="kpi-strip-sub">{kpi3_sub}</div>
     </div>
     <div class="kpi-strip-item">
       <div class="kpi-strip-label">Employees</div>
@@ -1842,14 +2103,42 @@ if (typeof ChartDataLabels !== 'undefined') {{
         }};
       }} else if (chartType === 'radar') {{
         config.options.plugins.datalabels = {{ display: false }};
+      }} else if (chartType === 'bubble' || chartType === 'scatter') {{
+        // Bubble/scatter: values are {{x, y, r}} objects — never render them raw.
+        // Use per-point label from ds.labels[i], ds.data[i].label, or chart.data.labels[i].
+        config.options.plugins.datalabels = {{
+          anchor: 'end',
+          align: 'top',
+          offset: 6,
+          color: '#334155',
+          font: {{ weight: '600', size: 11 }},
+          formatter: function(value, ctx) {{
+            var ds = ctx.dataset || {{}};
+            var i = ctx.dataIndex;
+            // Try per-point label first
+            if (ds.labels && ds.labels[i]) return String(ds.labels[i]);
+            if (value && typeof value === 'object' && value.label) return String(value.label);
+            // Chart-level labels array
+            var cdl = (ctx.chart && ctx.chart.data && ctx.chart.data.labels) || [];
+            if (cdl[i]) return String(cdl[i]);
+            // Dataset label as last resort (e.g. "Risks")
+            if (ds.label) return '';  // hide rather than show dataset name on every point
+            return '';
+          }}
+        }};
       }} else {{
-        // Bar, line, scatter: show values above points/bars
+        // Bar, line: show values above points/bars
         config.options.plugins.datalabels = {{
           anchor: 'end',
           align: 'top',
           color: '#374151',
           font: {{ weight: '600', size: 11 }},
           formatter: function(value) {{
+            // Guard against point objects
+            if (value && typeof value === 'object') {{
+              if (typeof value.y === 'number') value = value.y;
+              else return '';
+            }}
             if (typeof value === 'number') {{
               if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
               if (value >= 1000) return (value / 1000).toFixed(0) + 'K';
